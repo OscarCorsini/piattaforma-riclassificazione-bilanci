@@ -59,9 +59,16 @@ CUSTOM_CSS = f"""
     }}
     /* Le icone (es. quella di upload) sono glifi di un font-icona
        (Material Symbols): non vanno toccate, altrimenti si vede il
-       testo "upload" al posto dell'icona. */
-    span:not([data-testid="stIconMaterial"]) {{
+       testo "upload" al posto dell'icona. Escludere lo span dalla regola
+       sopra NON basta, perche' font-family e' una proprieta' ereditata:
+       lo span erediterebbe comunque "Inter" dal contenitore <div>
+       genitore. Bisogna quindi RIPRISTINARE esplicitamente il font-icona
+       sull'elemento stesso, per interrompere l'ereditarieta'. */
+    span {{
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif !important;
+    }}
+    [data-testid="stIconMaterial"] {{
+        font-family: 'Material Symbols Rounded' !important;
     }}
 
     :root {{
