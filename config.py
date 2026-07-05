@@ -7,7 +7,7 @@ Configurazione centrale della piattaforma di riclassificazione finanziaria.
 Qui sono definiti:
   - Le macro-categorie contabili (Entrate / Uscite / Gestione Fiscale)
   - La mappatura "categoria -> cella Excel" per ciascun anno gestito dal template
-  - Le impostazioni di connessione a Microsoft Copilot
+  - Le impostazioni di connessione a Google Gemini
 
 IMPORTANTE:
   Il mapping "CELL_MAPPING" sotto riportato e' un ESEMPIO basato sulla struttura
@@ -118,24 +118,22 @@ ANNI_DISPONIBILI: List[str] = list(CELL_MAPPING.keys())
 
 
 # ---------------------------------------------------------------------------
-# 3. CONFIGURAZIONE MICROSOFT COPILOT
+# 3. CONFIGURAZIONE GOOGLE GEMINI
 # ---------------------------------------------------------------------------
 @dataclass
-class CopilotConfig:
+class GeminiConfig:
     """
-    Parametri di connessione all'endpoint aziendale di Microsoft Copilot
-    (Azure AI Foundry / Copilot Studio / Azure OpenAI dietro Copilot).
+    Parametri di connessione all'API di Google Gemini (Google AI Studio).
 
-    >>> INSERIRE QUI LE CREDENZIALI AZIENDALI <<<
-    In produzione e' fortemente raccomandato NON scrivere le chiavi in chiaro
-    nel codice, ma leggerle da variabili d'ambiente o da un secret manager
-    (Azure Key Vault, .env con python-dotenv, ecc.).
+    >>> INSERIRE QUI LA CHIAVE API <<<
+    Genera una chiave gratuita su https://aistudio.google.com/apikey con il
+    tuo account Google, poi impostala come GEMINI_API_KEY (variabile
+    d'ambiente in locale, oppure nei Secrets di Streamlit Community Cloud).
+    Non scrivere mai la chiave direttamente nel codice.
     """
 
-    endpoint: str = field(default_factory=lambda: _env("COPILOT_ENDPOINT", ""))
-    api_key: str = field(default_factory=lambda: _env("COPILOT_API_KEY", ""))
-    deployment_name: str = field(default_factory=lambda: _env("COPILOT_DEPLOYMENT", "gpt-4o"))
-    api_version: str = field(default_factory=lambda: _env("COPILOT_API_VERSION", "2024-06-01"))
+    api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY", ""))
+    model_name: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.0-flash"))
     timeout_seconds: int = 90
 
 
@@ -145,7 +143,7 @@ def _env(key: str, default: str) -> str:
     #      credenziali si inseriscono nella dashboard (Settings > Secrets)
     #      invece che come variabili d'ambiente del sistema operativo.
     #   2. Variabili d'ambiente del sistema - usato per l'esecuzione locale
-    #      o su altri hosting (es. Cloud Run).
+    #      o su altri hosting.
     #   3. Valore di default.
     try:
         import streamlit as st
@@ -159,4 +157,4 @@ def _env(key: str, default: str) -> str:
 
 
 # Istanza di configurazione usata dall'applicazione.
-COPILOT_CONFIG = CopilotConfig()
+GEMINI_CONFIG = GeminiConfig()

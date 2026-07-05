@@ -4,14 +4,14 @@ app.py
 ======
 Interfaccia Streamlit per l'automazione della riclassificazione finanziaria
 di bilanci/situazioni contabili aziendali (settore agricolo), tramite
-Microsoft Copilot come motore AI, con output finale in Excel.
+Google Gemini come motore AI, con output finale in Excel.
 
 Avvio:
     streamlit run app.py
 
 Prerequisiti / credenziali:
-    Vedi commenti in config.py e copilot_client.py per come impostare
-    COPILOT_ENDPOINT, COPILOT_API_KEY, COPILOT_DEPLOYMENT.
+    Vedi commenti in config.py e gemini_client.py per come impostare
+    GEMINI_API_KEY.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ import streamlit as st
 
 from config import ANNI_DISPONIBILI
 from pdf_extractor import extract_text_from_multiple_pdfs, PDFExtractionError
-from copilot_client import (
+from gemini_client import (
     riclassifica_bilancio,
-    CopilotConfigError,
-    CopilotResponseError,
+    GeminiConfigError,
+    GeminiResponseError,
 )
 from excel_writer import popola_template_excel, ExcelTemplateError, ExcelMappingError
 
@@ -35,7 +35,7 @@ from excel_writer import popola_template_excel, ExcelTemplateError, ExcelMapping
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="Riclassificazione Finanziaria | Piattaforma Agritech",
-    page_icon="📊",
+    page_icon="\U0001F4CA",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -130,7 +130,7 @@ st.markdown(
     <div class="app-header">
         <h1>Piattaforma di Riclassificazione Finanziaria</h1>
         <p class="app-subtitle">
-            Analisi automatica delle situazioni contabili con Microsoft Copilot
+            Analisi automatica delle situazioni contabili con Google Gemini
             e generazione del modello di stima del margine in Excel.
         </p>
     </div>
@@ -140,7 +140,7 @@ st.markdown(
 
 
 # ---------------------------------------------------------------------------
-# STEP 1 — CARICAMENTO TEMPLATE
+# STEP 1 - CARICAMENTO TEMPLATE
 # ---------------------------------------------------------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="step-label">Passo 1</div>', unsafe_allow_html=True)
@@ -150,13 +150,13 @@ template_file = st.file_uploader(
     "File Excel del modello di stima del margine",
     type=["xlsx"],
     key="template_uploader",
-    help="Il file non verrà modificato: verrà generata una copia con i dati popolati.",
+    help="Il file non verra' modificato: verra' generata una copia con i dati popolati.",
 )
 st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# STEP 2 — ANNO DI RIFERIMENTO
+# STEP 2 - ANNO DI RIFERIMENTO
 # ---------------------------------------------------------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="step-label">Passo 2</div>', unsafe_allow_html=True)
@@ -174,14 +174,14 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# STEP 3 — CARICAMENTO PDF
+# STEP 3 - CARICAMENTO PDF
 # ---------------------------------------------------------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="step-label">Passo 3</div>', unsafe_allow_html=True)
 st.subheader("Carica la situazione contabile (PDF)")
 
 pdf_files = st.file_uploader(
-    "Uno o più file PDF (bilancio di verifica, mastrini, situazione contabile)",
+    "Uno o piu' file PDF (bilancio di verifica, mastrini, situazione contabile)",
     type=["pdf"],
     accept_multiple_files=True,
     key="pdf_uploader",
@@ -190,7 +190,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# STEP 4 — ELABORAZIONE
+# STEP 4 - ELABORAZIONE
 # ---------------------------------------------------------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="step-label">Passo 4</div>', unsafe_allow_html=True)
@@ -214,7 +214,7 @@ if avvia:
         with st.status("Elaborazione in corso...", expanded=True) as status:
 
             # --- Fase 1: estrazione testo dai PDF ---
-            status.write("📄 Estrazione testo dai documenti PDF...")
+            status.write("Estrazione testo dai documenti PDF...")
             try:
                 documenti = extract_text_from_multiple_pdfs(pdf_files)
             except PDFExtractionError as e:
@@ -227,21 +227,21 @@ if avvia:
                 for w in doc.warnings:
                     st.warning(f"'{doc.filename}': {w}")
 
-            # --- Fase 2: chiamata a Copilot per la riclassificazione ---
-            status.write("🤖 Interpretazione e riclassificazione con Microsoft Copilot...")
+            # --- Fase 2: chiamata a Gemini per la riclassificazione ---
+            status.write("Interpretazione e riclassificazione con Google Gemini...")
             try:
                 risultato = riclassifica_bilancio(anno_selezionato, testi)
-            except CopilotConfigError as e:
-                status.update(label="Configurazione Copilot mancante", state="error")
+            except GeminiConfigError as e:
+                status.update(label="Configurazione Gemini mancante", state="error")
                 st.error(
-                    "**Copilot non è configurato.**\n\n"
+                    "**Gemini non e' configurato.**\n\n"
                     f"{e}\n\n"
-                    "Consulta i commenti in `config.py` e `copilot_client.py` "
-                    "per impostare endpoint e credenziali aziendali."
+                    "Genera una chiave gratuita su https://aistudio.google.com/apikey "
+                    "e impostala come GEMINI_API_KEY nei Secrets dell'app."
                 )
                 st.stop()
-            except CopilotResponseError as e:
-                status.update(label="Risposta Copilot non valida", state="error")
+            except GeminiResponseError as e:
+                status.update(label="Risposta Gemini non valida", state="error")
                 st.error(f"**Risposta AI non nel formato atteso.**\n\n{e}")
                 st.stop()
 
@@ -251,7 +251,7 @@ if avvia:
                         st.write(f"- {nota}")
 
             # --- Fase 3: scrittura nel template Excel ---
-            status.write("📊 Popolamento del template Excel...")
+            status.write("Popolamento del template Excel...")
             try:
                 buffer, report = popola_template_excel(template_file, anno_selezionato, risultato)
             except ExcelTemplateError as e:
@@ -271,7 +271,7 @@ if avvia:
                 )
 
             status.update(
-                label=f"Completato — {report.celle_scritte} celle aggiornate",
+                label=f"Completato - {report.celle_scritte} celle aggiornate",
                 state="complete",
             )
 
@@ -290,10 +290,10 @@ if avvia:
         )
 
     except Exception as e:
-        # Rete di sicurezza per qualsiasi errore imprevisto non già gestito
+        # Rete di sicurezza per qualsiasi errore imprevisto non gia' gestito
         # dai blocchi specifici sopra: mostra un messaggio chiaro invece di
         # un traceback grezzo all'utente finale.
         st.error(
-            "**Si è verificato un errore imprevisto durante l'elaborazione.**\n\n"
+            "**Si e' verificato un errore imprevisto durante l'elaborazione.**\n\n"
             f"Dettaglio tecnico: `{type(e).__name__}: {e}`"
         )
