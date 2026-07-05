@@ -90,24 +90,84 @@ def _trova_riga_categoria(sheet, categoria: str, max_row: int = 300, max_col: in
     return None
 
 
+def _scansiona_riga_anni(sheet_valori, row: int, limite_colonne: int) -> Dict[str, str]:
+    """Legge una singola riga e restituisce {colonna_lettera: anno} per i
+    valori che sembrano plausibili anni (interi 1900-2100)."""
+    colonne_riga: Dict[str, str] = {}
+    for col in range(1, limite_colonne + 1):
+        valore = sheet_valori.cell(row=row, column=col).value
+        if isinstance(valore, bool):
+            continue
+        if isinstance(valore, (int, float)):
+            anno_int = int(valore)
+            if 1900 <= anno_int <= 2100 and float(anno_int) == float(valore):
+                colonne_riga[get_column_letter(col)] = str(anno_int)
+    return colonne_riga
+
+
 def _rileva_colonne_anno(sheet_valori, max_row: int = 30, max_col: int = 40) -> Dict[str, str]:
-    """Restituisce le colonne-anno {colonna_lettera: anno} della PRIMA riga
-    (dall'alto) che contiene almeno 2 valori interi verosimili come anno."""
+    """Restituisce le colonne-anno {colonna_lettera: anno}.
+
+    Normalmente basta la PRIMA riga (dall'alto) con almeno 2 valori interi
+    verosimili come anno. Alcuni template pero' hanno in quella riga valori
+    "vecchi"/non aggiornati (es. due colonne diverse con lo stesso anno,
+    perche' il foglio e' stato copiato/modificato senza ricalcolare i valori
+    statici): in quel caso la riga contiene un anno duplicato su piu'
+    colonne, segno che non e' affidabile al 100%. Quando succede, si cerca
+    nelle righe immediatamente successive (di solito la riga con le formule
+    di calcolo dell'anno, es. "=C3+1") una riga SENZA duplicati che possa
+    correggere le colonne in conflitto, e si integrano i risultati.
+    """
     limite_righe = min(sheet_valori.max_row or max_row, max_row)
     limite_colonne = min(sheet_valori.max_column or max_col, max_col)
 
     for row in range(1, limite_righe + 1):
-        colonne_riga: Dict[str, str] = {}
-        for col in range(1, limite_colonne + 1):
-            valore = sheet_valori.cell(row=row, column=col).value
-            if isinstance(valore, bool):
-                continue
-            if isinstance(valore, (int, float)):
-                anno_int = int(valore)
-                if 1900 <= anno_int <= 2100 and float(anno_int) == float(valore):
-                    colonne_riga[get_column_letter(col)] = str(anno_int)
-        if len(colonne_riga) >= 2:
+        colonne_riga = _scansiona_riga_anni(sheet_valori, row, limite_colonne)
+        if len(colonne_riga) < 2:
+            continue
+
+        valori = list(colonne_riga.values())
+        duplicati = {v for v in valori if valori.count(v) > 1}
+        if not duplicati:
             return colonne_riga
+
+        # La riga trovata ha valori duplicati (es. due colonne con lo
+        # stesso anno): prova a correggere le colonne in conflitto usando
+        # le prossime righe, che spesso contengono la sequenza corretta
+        # calcolata da formule (es. anno_base+1, +2, ...). La correzione e'
+        # iterativa: sistemare una colonna puo' rivelare un nuovo conflitto
+        # (es. la colonna successiva aveva "ereditato" lo stesso anno), quindi
+        # si ripete finche' non ci sono piu' duplicati o non si puo' piu'
+        # correggere nulla con la riga corrente.
+        for succ_row in range(row + 1, min(row + 6, limite_righe + 1)):
+            riga_succ = _scansiona_riga_anni(sheet_valori, succ_row, limite_colonne)
+            if len(riga_succ) < 2:
+                continue
+            valori_succ = list(riga_succ.values())
+
+            while True:
+                valori_attuali = list(colonne_riga.values())
+                duplicati_attuali = {v for v in valori_attuali if valori_attuali.count(v) > 1}
+                if not duplicati_attuali:
+                    break
+                corretto = False
+                for col, val in list(colonne_riga.items()):
+                    if val in duplicati_attuali and col in riga_succ:
+                        nuovo_valore = riga_succ[col]
+                        if nuovo_valore != val and valori_succ.count(nuovo_valore) == 1:
+                            colonne_riga[col] = nuovo_valore
+                            corretto = True
+                if not corretto:
+                    break
+
+            # Integra anche eventuali colonne-anno aggiuntive non presenti
+            # nella riga originale (es. anni futuri/previsionali), purche'
+            # non creino un nuovo duplicato.
+            for col, valore in riga_succ.items():
+                if col not in colonne_riga and valore not in colonne_riga.values():
+                    colonne_riga[col] = valore
+
+        return colonne_riga
 
     return {}
 

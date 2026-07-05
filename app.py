@@ -54,7 +54,13 @@ CUSTOM_CSS = f"""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     html, body, [class^="st-emotion"], [class*=" st-emotion"],
-    button, input, select, textarea, p, li, label, span, div {{
+    button, input, select, textarea, p, li, label, div {{
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif !important;
+    }}
+    /* Le icone (es. quella di upload) sono glifi di un font-icona
+       (Material Symbols): non vanno toccate, altrimenti si vede il
+       testo "upload" al posto dell'icona. */
+    span:not([data-testid="stIconMaterial"]) {{
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif !important;
     }}
 
@@ -195,19 +201,38 @@ CUSTOM_CSS = f"""
         background-color: #ffffff;
         border: 1.5px dashed var(--tortora);
         border-radius: 8px;
-        height: 44px;
         min-height: 44px;
-        max-height: 44px;
-        padding: 0 0.7rem;
+        padding: 0.35rem 0.7rem;
         margin: 0;
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         box-sizing: border-box;
     }}
     /* Nasconde il testo informativo ("Drag and drop", "200MB per file")
-       per rendere il campo compatto quanto il menu a tendina Anno. */
+       per rendere il campo compatto quanto il menu a tendina Anno quando
+       e' vuoto. NON forziamo un'altezza massima fissa sul contenitore:
+       quando un file e' stato caricato, Streamlit mostra un "chip" con
+       nome/dimensione del file all'interno dello stesso contenitore, e
+       un'altezza massima troppo rigida lo taglierebbe/sovrapporrebbe
+       (il glitch di testo visto in precedenza). Il contenitore cresce
+       quindi in altezza solo quando serve.
+    */
     [data-testid="stFileUploaderDropzoneInstructions"] {{
         display: none;
+    }}
+    /* Il pulsante "Browse files" nativo non serve piu' dato che le
+       istruzioni sono nascoste e vogliamo un campo compatto: lo teniamo
+       ma senza farlo traboccare fuori dal contenitore. */
+    [data-testid="stFileUploaderDropzone"] section > button {{
+        margin-left: auto;
+    }}
+    /* Elenco dei file gia' caricati (chip con nome/dimensione): deve
+       poter andare a capo ed avere spazio proprio, senza sovrapporsi
+       al resto del contenuto del dropzone. */
+    [data-testid="stFileUploaderDropzone"] ul,
+    [data-testid="stFileUploaderFile"] {{
+        width: 100%;
     }}
 
     div[data-baseweb="select"] {{
@@ -332,7 +357,7 @@ with st.container(border=True):
                     key=f"pdf_{riga_id}",
                 )
             with col_rimuovi:
-                st.button("✕", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
+                st.button("X", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
         righe_dati.append((anno_scelto, file_pdf))
 
     col_add, col_info = st.columns([2, 5])
