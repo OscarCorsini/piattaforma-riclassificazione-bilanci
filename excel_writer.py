@@ -24,8 +24,6 @@ Supporta inoltre la scrittura di PIU' ANNI in un'unica esecuzione
 tutti gli anni richiesti prima di salvare.
 """
 
-from __future__ import annotations
-
 import io
 import re
 import unicodedata

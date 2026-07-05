@@ -23,8 +23,6 @@ o Google, clicca "Create API Key" e copiala. Nessuna carta di credito
 richiesta, piano gratuito permanente.
 """
 
-from __future__ import annotations
-
 import json
 import re
 from dataclasses import dataclass

@@ -2,15 +2,13 @@
 """
 pdf_extractor.py
 ================
-Estrazione del testo grezzo da uno o più PDF di situazione contabile
+Estrazione del testo grezzo da uno o piu' PDF di situazione contabile
 (bilancio di verifica, mastrini, estratti conto, ecc.).
 
-Usa pdfplumber (più accurato con tabelle) con fallback su PyPDF2 se
+Usa pdfplumber (piu' accurato con tabelle) con fallback su PyPDF2 se
 pdfplumber non riesce a leggere il file (es. PDF scansionati senza layer
 testuale, PDF corrotti, protetti da password non gestita, ecc.).
 """
-
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional
@@ -20,7 +18,7 @@ from PyPDF2 import PdfReader
 
 
 class PDFExtractionError(Exception):
-    """Sollevata quando un PDF non può essere letto da nessuno dei due motori."""
+    """Sollevata quando un PDF non puo' essere letto da nessuno dei due motori."""
 
 
 @dataclass
@@ -41,7 +39,7 @@ def _extract_with_pdfplumber(file_obj) -> Optional[str]:
                 parts.append(page_text)
 
                 # Estrae anche le tabelle in forma testuale semplice, utile
-                # perché le situazioni contabili sono spesso tabellari.
+                # perche' le situazioni contabili sono spesso tabellari.
                 for table in page.extract_tables():
                     for row in table:
                         clean_row = [str(c) if c is not None else "" for c in row]
@@ -100,7 +98,7 @@ def extract_text_from_pdf(file_obj, filename: str) -> ExtractedDocument:
 
 def extract_text_from_multiple_pdfs(files) -> List[ExtractedDocument]:
     """
-    Estrae il testo da più file PDF caricati contemporaneamente.
+    Estrae il testo da piu' file PDF caricati contemporaneamente.
     Ogni file viene elaborato in modo indipendente: se uno fallisce,
     l'eccezione riporta chiaramente quale file ha causato il problema
     (il chiamante decide se interrompere o continuare con gli altri).
