@@ -4,14 +4,14 @@ app.py
 ======
 Interfaccia Streamlit per l'automazione della riclassificazione finanziaria
 di bilanci/situazioni contabili aziendali (settore agricolo), tramite
-Google Gemini come motore AI, con output finale in Excel.
+Groq come motore AI, con output finale in Excel.
 
 Avvio:
     streamlit run app.py
 
 Prerequisiti / credenziali:
-    Vedi commenti in config.py e gemini_client.py per come impostare
-    GEMINI_API_KEY.
+    Vedi commenti in config.py e groq_client.py per come impostare
+    GROQ_API_KEY.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ import streamlit as st
 
 from config import ANNI_DISPONIBILI
 from pdf_extractor import extract_text_from_multiple_pdfs, PDFExtractionError
-from gemini_client import (
+from groq_client import (
     riclassifica_bilancio,
-    GeminiConfigError,
-    GeminiResponseError,
+    GroqConfigError,
+    GroqResponseError,
 )
 from excel_writer import popola_template_excel, ExcelTemplateError, ExcelMappingError
 
@@ -130,7 +130,7 @@ st.markdown(
     <div class="app-header">
         <h1>Piattaforma di Riclassificazione Finanziaria</h1>
         <p class="app-subtitle">
-            Analisi automatica delle situazioni contabili con Google Gemini
+            Analisi automatica delle situazioni contabili con Groq (AI)
             e generazione del modello di stima del margine in Excel.
         </p>
     </div>
@@ -227,21 +227,21 @@ if avvia:
                 for w in doc.warnings:
                     st.warning(f"'{doc.filename}': {w}")
 
-            # --- Fase 2: chiamata a Gemini per la riclassificazione ---
-            status.write("Interpretazione e riclassificazione con Google Gemini...")
+            # --- Fase 2: chiamata a Groq per la riclassificazione ---
+            status.write("Interpretazione e riclassificazione con Groq...")
             try:
                 risultato = riclassifica_bilancio(anno_selezionato, testi)
-            except GeminiConfigError as e:
-                status.update(label="Configurazione Gemini mancante", state="error")
+            except GroqConfigError as e:
+                status.update(label="Configurazione Groq mancante", state="error")
                 st.error(
-                    "**Gemini non e' configurato.**\n\n"
+                    "**Groq non e' configurato.**\n\n"
                     f"{e}\n\n"
-                    "Genera una chiave gratuita su https://aistudio.google.com/apikey "
-                    "e impostala come GEMINI_API_KEY nei Secrets dell'app."
+                    "Genera una chiave gratuita su https://console.groq.com/keys "
+                    "e impostala come GROQ_API_KEY nei Secrets dell'app."
                 )
                 st.stop()
-            except GeminiResponseError as e:
-                status.update(label="Risposta Gemini non valida", state="error")
+            except GroqResponseError as e:
+                status.update(label="Risposta Groq non valida", state="error")
                 st.error(f"**Risposta AI non nel formato atteso.**\n\n{e}")
                 st.stop()
 

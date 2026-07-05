@@ -1,15 +1,15 @@
 # Piattaforma di Riclassificazione Finanziaria
 
 Applicazione Streamlit locale che estrae dati da situazioni contabili in PDF,
-li riclassifica tramite Google Gemini e popola un template Excel di
-stima del margine.
+li riclassifica tramite Groq (motore AI gratuito) e popola un template
+Excel di stima del margine.
 
 ## File del progetto
 
 - `app.py` — interfaccia Streamlit.
-- `config.py` — categorie di riclassificazione, mapping celle Excel per anno, configurazione Gemini.
+- `config.py` — categorie di riclassificazione, mapping celle Excel per anno, configurazione Groq.
 - `pdf_extractor.py` — estrazione testo dai PDF (pdfplumber + fallback PyPDF2).
-- `gemini_client.py` — prompt e chiamata a Google Gemini, parsing risposta.
+- `groq_client.py` — prompt e chiamata a Groq (API compatibile OpenAI), parsing risposta.
 - `excel_writer.py` — scrittura dei valori nel template Excel con openpyxl (preserva formule e formattazioni).
 - `requirements.txt` — dipendenze Python.
 
@@ -19,15 +19,16 @@ stima del margine.
 pip install -r requirements.txt
 ```
 
-## Configurazione della chiave Gemini
+## Configurazione della chiave Groq
 
-Genera una chiave API gratuita su https://aistudio.google.com/apikey con il
-tuo account Google (nessuna carta di credito richiesta per il piano
-gratuito), poi impostala come variabile d'ambiente prima di avviare l'app:
+Genera una chiave API gratuita su https://console.groq.com/keys con un
+account email o Google (nessuna carta di credito richiesta, piano
+gratuito permanente), poi impostala come variabile d'ambiente prima di
+avviare l'app:
 
 ```powershell
-$env:GEMINI_API_KEY = "<la-tua-chiave>"
-$env:GEMINI_MODEL   = "gemini-2.0-flash"   # opzionale, ha un default
+$env:GROQ_API_KEY = "<la-tua-chiave>"
+$env:GROQ_MODEL   = "llama-3.3-70b-versatile"   # opzionale, ha un default
 ```
 
 Su macOS/Linux usa `export VAR=valore` al posto di `$env:VAR = "valore"`.
@@ -61,7 +62,7 @@ https://github.com/OscarCorsini/piattaforma-riclassificazione-bilanci
    `app.py`.
 2. Prima di avviare il deploy, apri "Advanced settings" -> "Secrets" e
    incolla il contenuto di `.streamlit/secrets.toml.example` con la tua
-   chiave Gemini reale.
+   chiave Groq reale.
 3. Clicca "Deploy". Dopo qualche minuto l'app è online con un link
    pubblico.
 4. In "Settings" -> "Sharing" puoi restringere l'accesso solo a email
@@ -81,5 +82,10 @@ https://github.com/OscarCorsini/piattaforma-riclassificazione-bilanci
   lavora su una copia in memoria e restituisce il risultato in download.
 - Se un PDF è una scansione senza testo selezionabile (nessun OCR), l'app
   mostra un avviso chiaro invece di generare un output vuoto.
-- Se Gemini restituisce una risposta non conforme al formato JSON
+- Se Groq restituisce una risposta non conforme al formato JSON
   atteso, l'app lo segnala senza scrivere dati incompleti nel file Excel.
+- Perché Groq e non Gemini/Copilot: Google esclude l'area EEA/UK/Svizzera
+  dal piano gratuito di Gemini (richiede carta di credito anche per un
+  uso minimo); Groq offre invece un piano gratuito autentico e permanente,
+  senza restrizioni geografiche note, con modelli Llama/Qwen ad alte
+  prestazioni.

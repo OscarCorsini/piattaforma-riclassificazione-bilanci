@@ -7,7 +7,7 @@ Configurazione centrale della piattaforma di riclassificazione finanziaria.
 Qui sono definiti:
   - Le macro-categorie contabili (Entrate / Uscite / Gestione Fiscale)
   - La mappatura "categoria -> cella Excel" per ciascun anno gestito dal template
-  - Le impostazioni di connessione a Google Gemini
+  - Le impostazioni di connessione a Groq (motore AI)
 
 IMPORTANTE:
   Il mapping "CELL_MAPPING" sotto riportato e' un ESEMPIO basato sulla struttura
@@ -118,22 +118,24 @@ ANNI_DISPONIBILI: List[str] = list(CELL_MAPPING.keys())
 
 
 # ---------------------------------------------------------------------------
-# 3. CONFIGURAZIONE GOOGLE GEMINI
+# 3. CONFIGURAZIONE GROQ
 # ---------------------------------------------------------------------------
 @dataclass
-class GeminiConfig:
+class GroqConfig:
     """
-    Parametri di connessione all'API di Google Gemini (Google AI Studio).
+    Parametri di connessione all'API di Groq (motore AI, gratuito, senza
+    carta di credito richiesta).
 
     >>> INSERIRE QUI LA CHIAVE API <<<
-    Genera una chiave gratuita su https://aistudio.google.com/apikey con il
-    tuo account Google, poi impostala come GEMINI_API_KEY (variabile
+    Genera una chiave gratuita su https://console.groq.com/keys con un
+    account email o Google, poi impostala come GROQ_API_KEY (variabile
     d'ambiente in locale, oppure nei Secrets di Streamlit Community Cloud).
     Non scrivere mai la chiave direttamente nel codice.
     """
 
-    api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY", ""))
-    model_name: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.0-flash"))
+    api_key: str = field(default_factory=lambda: _env("GROQ_API_KEY", ""))
+    model_name: str = field(default_factory=lambda: _env("GROQ_MODEL", "llama-3.3-70b-versatile"))
+    base_url: str = "https://api.groq.com/openai/v1"
     timeout_seconds: int = 90
 
 
@@ -157,4 +159,4 @@ def _env(key: str, default: str) -> str:
 
 
 # Istanza di configurazione usata dall'applicazione.
-GEMINI_CONFIG = GeminiConfig()
+GROQ_CONFIG = GroqConfig()

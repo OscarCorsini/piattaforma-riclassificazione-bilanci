@@ -21,7 +21,7 @@ import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
 from config import CELL_MAPPING, SHEET_NAME_RICLASSIFICAZIONE
-from gemini_client import RiclassificazioneResult
+from groq_client import RiclassificazioneResult
 
 
 class ExcelTemplateError(Exception):
