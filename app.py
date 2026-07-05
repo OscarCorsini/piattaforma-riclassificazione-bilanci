@@ -27,7 +27,12 @@ from groq_client import (
     GroqConfigError,
     GroqResponseError,
 )
-from excel_writer import popola_template_excel, ExcelTemplateError, ExcelMappingError
+from excel_writer import (
+    popola_template_excel,
+    rileva_anni_disponibili,
+    ExcelTemplateError,
+    ExcelMappingError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -162,11 +167,26 @@ st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="step-label">Passo 2</div>', unsafe_allow_html=True)
 st.subheader("Seleziona l'anno di riferimento")
 
+anni_rilevati: list[str] = []
+if template_file is not None:
+    anni_rilevati = rileva_anni_disponibili(template_file)
+
+if anni_rilevati:
+    opzioni_anni = anni_rilevati
+    st.caption("Anni rilevati automaticamente dal template caricato.")
+else:
+    opzioni_anni = ANNI_DISPONIBILI
+    if template_file is not None:
+        st.caption(
+            "Non e' stato possibile rilevare automaticamente gli anni dal "
+            "template: uso l'elenco di default."
+        )
+
 anno_corrente = str(_dt.date.today().year)
-default_index = ANNI_DISPONIBILI.index(anno_corrente) if anno_corrente in ANNI_DISPONIBILI else 0
+default_index = opzioni_anni.index(anno_corrente) if anno_corrente in opzioni_anni else 0
 anno_selezionato = st.selectbox(
     "Anno della situazione contabile",
-    options=ANNI_DISPONIBILI,
+    options=opzioni_anni,
     index=default_index,
     key="anno_select",
 )
@@ -265,9 +285,9 @@ if avvia:
 
             if report.voci_non_mappate:
                 st.warning(
-                    "Le seguenti categorie non hanno una cella configurata per "
-                    f"l'anno {anno_selezionato} e non sono state scritte nel file: "
-                    + ", ".join(report.voci_non_mappate)
+                    "Le seguenti categorie non sono state trovate nel template "
+                    "(probabilmente non presenti in questo modello) e non sono "
+                    "state scritte nel file: " + ", ".join(report.voci_non_mappate)
                 )
 
             status.update(
