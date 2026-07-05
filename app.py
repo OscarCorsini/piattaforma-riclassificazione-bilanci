@@ -129,7 +129,7 @@ CUSTOM_CSS = f"""
         margin-bottom: 0.6rem;
     }}
 
-    .riga-anno {{
+    div[class*="st-key-riga_"] {{
         background: var(--grigio-chiaro);
         border: 1px solid var(--tortora);
         border-radius: 10px;
@@ -173,7 +173,7 @@ CUSTOM_CSS = f"""
 
     /* Allineamento riga Anno / PDF / rimuovi: stessa altezza e stesso
        allineamento verticale. */
-    .riga-anno [data-testid="stHorizontalBlock"] {{
+    div[class*="st-key-riga_"] [data-testid="stHorizontalBlock"] {{
         align-items: flex-end;
     }}
 
@@ -200,7 +200,7 @@ CUSTOM_CSS = f"""
 
     /* Il bottone "rimuovi riga" non ha un'etichetta sopra come gli altri
        due campi: lo spostiamo in basso per allinearlo alla stessa base. */
-    .riga-anno div.stButton {{
+    div[class*="st-key-riga_"] div.stButton {{
         margin-top: 1.6rem;
     }}
 
@@ -287,24 +287,23 @@ with st.container(border=True):
 
     righe_dati = []
     for riga_id in list(st.session_state.righe_ids):
-        st.markdown('<div class="riga-anno">', unsafe_allow_html=True)
-        col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
-        with col_anno:
-            anno_scelto = st.selectbox(
-                "Anno",
-                options=opzioni_anni,
-                key=f"anno_{riga_id}",
-            )
-        with col_upload:
-            file_pdf = st.file_uploader(
-                "PDF situazione contabile",
-                type=["pdf"],
-                accept_multiple_files=True,
-                key=f"pdf_{riga_id}",
-            )
-        with col_rimuovi:
-            st.button("✕", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(key=f"riga_{riga_id}"):
+            col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
+            with col_anno:
+                anno_scelto = st.selectbox(
+                    "Anno",
+                    options=opzioni_anni,
+                    key=f"anno_{riga_id}",
+                )
+            with col_upload:
+                file_pdf = st.file_uploader(
+                    "PDF situazione contabile",
+                    type=["pdf"],
+                    accept_multiple_files=True,
+                    key=f"pdf_{riga_id}",
+                )
+            with col_rimuovi:
+                st.button("✕", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
         righe_dati.append((anno_scelto, file_pdf))
 
     col_add, col_info = st.columns([2, 5])
