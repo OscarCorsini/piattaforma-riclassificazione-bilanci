@@ -3,8 +3,8 @@
 app.py
 ======
 Interfaccia Streamlit per l'automazione della riclassificazione finanziaria
-di bilanci/situazioni contabili aziendali (settore agricolo), tramite
-Groq come motore AI, con output finale in Excel.
+di bilanci/situazioni contabili aziendali (settore agricolo), con output
+finale in Excel.
 
 Il template Excel e' fisso e incorporato nell'app (template_bilancio.xlsx):
 l'utente non deve piu' caricarlo manualmente. E' possibile elaborare piu'
@@ -96,18 +96,7 @@ CUSTOM_CSS = f"""
     }}
 
     .app-header {{
-        border-bottom: 2px solid var(--salvia);
-        padding-bottom: 1.3rem;
-        margin-bottom: 2.2rem;
-    }}
-
-    .app-eyebrow {{
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        font-size: 0.72rem;
-        font-weight: 700;
-        color: var(--ocra);
-        margin-bottom: 0.4rem;
+        margin-bottom: 1.8rem;
     }}
 
     .app-subtitle {{
@@ -116,13 +105,14 @@ CUSTOM_CSS = f"""
         margin-top: 0.2rem;
     }}
 
-    .section-card {{
+    /* Card reale (Streamlit st.container(border=True)), non un div HTML
+       "manuale" che rimarrebbe vuoto tra una chiamata st.markdown e
+       l'altra. */
+    [data-testid="stVerticalBlockBorderWrapper"] {{
         background: #ffffff;
-        border: 1px solid var(--tortora);
-        border-left: 4px solid var(--salvia);
-        border-radius: 12px;
-        padding: 1.5rem 1.7rem;
-        margin-bottom: 1.5rem;
+        border: 1px solid var(--tortora) !important;
+        border-left: 4px solid var(--salvia) !important;
+        border-radius: 12px !important;
         box-shadow: 0 1px 3px rgba(51, 51, 51, 0.05);
     }}
 
@@ -143,7 +133,7 @@ CUSTOM_CSS = f"""
         background: var(--grigio-chiaro);
         border: 1px solid var(--tortora);
         border-radius: 10px;
-        padding: 0.9rem 1rem 0.3rem 1rem;
+        padding: 0.9rem 1rem 0.9rem 1rem;
         margin-bottom: 0.8rem;
     }}
 
@@ -181,23 +171,37 @@ CUSTOM_CSS = f"""
         color: #ffffff;
     }}
 
+    /* Allineamento riga Anno / PDF / rimuovi: stessa altezza e stesso
+       allineamento verticale. */
+    .riga-anno [data-testid="stHorizontalBlock"] {{
+        align-items: flex-end;
+    }}
+
     [data-testid="stFileUploaderDropzone"] {{
         background-color: #ffffff;
         border: 1.5px dashed var(--tortora);
         border-radius: 8px;
+        min-height: 40px;
+        padding: 0.35rem 0.7rem;
+        display: flex;
+        align-items: center;
+    }}
+    /* Nasconde il testo informativo ("Drag and drop", "200MB per file")
+       per rendere il campo compatto quanto il menu a tendina Anno. */
+    [data-testid="stFileUploaderDropzoneInstructions"] {{
+        display: none;
     }}
 
     div[data-baseweb="select"] > div {{
         border-radius: 6px;
         border-color: var(--tortora);
+        min-height: 40px;
     }}
 
-    .mol-block {{
-        background-color: var(--antracite);
-        color: #ffffff;
-        border-radius: 10px;
-        padding: 1.1rem 1.4rem;
-        margin-top: 0.6rem;
+    /* Il bottone "rimuovi riga" non ha un'etichetta sopra come gli altri
+       due campi: lo spostiamo in basso per allinearlo alla stessa base. */
+    .riga-anno div.stButton {{
+        margin-top: 1.6rem;
     }}
 
     footer {{display: none;}}
@@ -212,11 +216,10 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 st.markdown(
     """
     <div class="app-header">
-        <div class="app-eyebrow">Divisione Agritech</div>
         <h1>Piattaforma di Riclassificazione Finanziaria</h1>
         <p class="app-subtitle">
-            Analisi automatica delle situazioni contabili con Groq (AI)
-            e generazione del modello di stima del margine in Excel.
+            Analisi delle situazioni contabili e generazione del modello
+            di stima del margine.
         </p>
     </div>
     """,
@@ -273,66 +276,61 @@ def _rimuovi_riga(riga_id: int):
 # ---------------------------------------------------------------------------
 # STEP UNICO - SELEZIONE ANNI E CARICAMENTO PDF
 # ---------------------------------------------------------------------------
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="step-label">Situazioni contabili</div>', unsafe_allow_html=True)
-st.subheader("Seleziona l'anno e carica i documenti")
-st.caption(
-    "Il modello Excel e' quello aziendale standard: non serve caricarlo. "
-    "Puoi elaborare piu' anni nella stessa esecuzione: aggiungi una riga "
-    "per ciascun anno da compilare."
-)
-
-righe_dati = []
-for riga_id in list(st.session_state.righe_ids):
-    st.markdown('<div class="riga-anno">', unsafe_allow_html=True)
-    col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
-    with col_anno:
-        anno_scelto = st.selectbox(
-            "Anno",
-            options=opzioni_anni,
-            key=f"anno_{riga_id}",
-        )
-    with col_upload:
-        file_pdf = st.file_uploader(
-            "PDF situazione contabile",
-            type=["pdf"],
-            accept_multiple_files=True,
-            key=f"pdf_{riga_id}",
-        )
-    with col_rimuovi:
-        st.write("")
-        st.button("✕", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
-    st.markdown("</div>", unsafe_allow_html=True)
-    righe_dati.append((anno_scelto, file_pdf))
-
-col_add, col_info = st.columns([2, 5])
-with col_add:
-    st.button("+ Aggiungi un altro anno", on_click=_aggiungi_riga, use_container_width=True)
-with col_info:
-    st.markdown(
-        f'<div class="anni-info">Anni disponibili nel template: {", ".join(opzioni_anni)}</div>',
-        unsafe_allow_html=True,
+with st.container(border=True):
+    st.markdown('<div class="step-label">Situazioni contabili</div>', unsafe_allow_html=True)
+    st.subheader("Seleziona l'anno e carica i documenti")
+    st.caption(
+        "Il modello Excel e' quello aziendale standard: non serve caricarlo. "
+        "Puoi elaborare piu' anni nella stessa esecuzione: aggiungi una riga "
+        "per ciascun anno da compilare."
     )
 
-st.markdown("</div>", unsafe_allow_html=True)
+    righe_dati = []
+    for riga_id in list(st.session_state.righe_ids):
+        st.markdown('<div class="riga-anno">', unsafe_allow_html=True)
+        col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
+        with col_anno:
+            anno_scelto = st.selectbox(
+                "Anno",
+                options=opzioni_anni,
+                key=f"anno_{riga_id}",
+            )
+        with col_upload:
+            file_pdf = st.file_uploader(
+                "PDF situazione contabile",
+                type=["pdf"],
+                accept_multiple_files=True,
+                key=f"pdf_{riga_id}",
+            )
+        with col_rimuovi:
+            st.button("✕", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
+        st.markdown("</div>", unsafe_allow_html=True)
+        righe_dati.append((anno_scelto, file_pdf))
+
+    col_add, col_info = st.columns([2, 5])
+    with col_add:
+        st.button("+ Aggiungi un altro anno", on_click=_aggiungi_riga, use_container_width=True)
+    with col_info:
+        st.markdown(
+            f'<div class="anni-info">Anni disponibili nel template: {", ".join(opzioni_anni)}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------
 # STEP FINALE - ELABORAZIONE
 # ---------------------------------------------------------------------------
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="step-label">Elaborazione</div>', unsafe_allow_html=True)
-st.subheader("Genera il file Excel completato")
+with st.container(border=True):
+    st.markdown('<div class="step-label">Elaborazione</div>', unsafe_allow_html=True)
+    st.subheader("Genera il file Excel completato")
 
-righe_valide = [(anno, files) for anno, files in righe_dati if files]
-pronto = len(righe_valide) > 0
+    righe_valide = [(anno, files) for anno, files in righe_dati if files]
+    pronto = len(righe_valide) > 0
 
-avvia = st.button("Avvia elaborazione", disabled=not pronto, use_container_width=True)
+    avvia = st.button("Avvia elaborazione", disabled=not pronto, use_container_width=True)
 
-if not pronto:
-    st.caption("Carica almeno un PDF per un anno per procedere.")
-
-st.markdown("</div>", unsafe_allow_html=True)
+    if not pronto:
+        st.caption("Carica almeno un PDF per un anno per procedere.")
 
 
 # ---------------------------------------------------------------------------
@@ -356,25 +354,23 @@ if avvia:
                 for w in doc.warnings:
                     st.warning(f"Anno {anno} - '{doc.filename}': {w}")
 
-            status.write(f"Anno {anno}: riclassificazione con Groq...")
+            status.write(f"Anno {anno}: riclassificazione in corso...")
             try:
                 risultato = riclassifica_bilancio(anno, testi)
             except GroqConfigError as e:
-                status.update(label="Configurazione Groq mancante", state="error")
+                status.update(label="Configurazione mancante", state="error")
                 st.error(
-                    "**Groq non e' configurato.**\n\n"
-                    f"{e}\n\n"
-                    "Genera una chiave gratuita su https://console.groq.com/keys "
-                    "e impostala come GROQ_API_KEY nei Secrets dell'app."
+                    "**Il motore di analisi non e' configurato.**\n\n"
+                    f"{e}"
                 )
                 st.stop()
             except GroqResponseError as e:
-                errori_gruppo[anno] = f"Risposta AI non nel formato atteso: {e}"
+                errori_gruppo[anno] = f"Risposta non nel formato atteso: {e}"
                 continue
 
             risultati_per_anno[anno] = risultato
             if risultato.note:
-                with st.expander(f"Osservazioni dell'AI - anno {anno}"):
+                with st.expander(f"Osservazioni - anno {anno}"):
                     for nota in risultato.note:
                         st.write(f"- {nota}")
 
