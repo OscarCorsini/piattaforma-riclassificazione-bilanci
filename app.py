@@ -54,7 +54,8 @@ CUSTOM_CSS = f"""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     html, body, [class^="st-emotion"], [class*=" st-emotion"],
-    button, input, select, textarea, p, li, label, div {{
+    button, input, select, textarea, p, li, label, div,
+    h1, h2, h3, h4, h5, h6 {{
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif !important;
     }}
     /* Le icone (es. quella di upload) sono glifi di un font-icona
