@@ -204,10 +204,6 @@ CUSTOM_CSS = f"""
         align-items: center;
         box-sizing: border-box;
     }}
-    [data-testid="stFileUploaderDropzone"] button {{
-        height: 32px;
-        padding: 0 0.9rem;
-    }}
     /* Nasconde il testo informativo ("Drag and drop", "200MB per file")
        per rendere il campo compatto quanto il menu a tendina Anno. */
     [data-testid="stFileUploaderDropzoneInstructions"] {{
