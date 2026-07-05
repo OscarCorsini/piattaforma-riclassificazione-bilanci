@@ -79,8 +79,20 @@ CUSTOM_CSS = f"""
         letter-spacing: -0.01em;
     }}
 
-    p, li, span, label {{
+    p, li, label {{
         color: var(--antracite);
+    }}
+
+    /* Il testo dei bottoni Streamlit e' avvolto in <p>/<span> interni: la
+       regola generica sopra lo renderebbe scuro su sfondo scuro. Qui lo
+       forziamo sempre bianco per i bottoni con sfondo pieno. */
+    div.stButton > button p,
+    div.stButton > button span,
+    div.stButton > button div,
+    div[data-testid="stDownloadButton"] > button p,
+    div[data-testid="stDownloadButton"] > button span,
+    div[data-testid="stDownloadButton"] > button div {{
+        color: inherit !important;
     }}
 
     .app-header {{
