@@ -51,6 +51,13 @@ st.set_page_config(
 
 CUSTOM_CSS = f"""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class^="st-emotion"], [class*=" st-emotion"],
+    button, input, select, textarea, p, li, label, span, div {{
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif !important;
+    }}
+
     :root {{
         --antracite: {PALETTE['antracite']};
         --salvia: {PALETTE['salvia']};
@@ -172,19 +179,34 @@ CUSTOM_CSS = f"""
     }}
 
     /* Allineamento riga Anno / PDF / rimuovi: stessa altezza e stesso
-       allineamento verticale. */
+       allineamento verticale (le etichette sono sulla stessa riga, i
+       campi sotto devono avere ESATTAMENTE la stessa altezza). */
     div[class*="st-key-riga_"] [data-testid="stHorizontalBlock"] {{
         align-items: flex-end;
+    }}
+
+    div[class*="st-key-riga_"] [data-testid="stWidgetLabel"] {{
+        height: 24px;
+        display: flex;
+        align-items: center;
     }}
 
     [data-testid="stFileUploaderDropzone"] {{
         background-color: #ffffff;
         border: 1.5px dashed var(--tortora);
         border-radius: 8px;
-        min-height: 40px;
-        padding: 0.35rem 0.7rem;
+        height: 44px;
+        min-height: 44px;
+        max-height: 44px;
+        padding: 0 0.7rem;
+        margin: 0;
         display: flex;
         align-items: center;
+        box-sizing: border-box;
+    }}
+    [data-testid="stFileUploaderDropzone"] button {{
+        height: 32px;
+        padding: 0 0.9rem;
     }}
     /* Nasconde il testo informativo ("Drag and drop", "200MB per file")
        per rendere il campo compatto quanto il menu a tendina Anno. */
@@ -192,16 +214,27 @@ CUSTOM_CSS = f"""
         display: none;
     }}
 
+    div[data-baseweb="select"] {{
+        height: 44px;
+    }}
     div[data-baseweb="select"] > div {{
         border-radius: 6px;
         border-color: var(--tortora);
-        min-height: 40px;
+        height: 44px;
+        min-height: 44px;
+        max-height: 44px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
     }}
 
     /* Il bottone "rimuovi riga" non ha un'etichetta sopra come gli altri
        due campi: lo spostiamo in basso per allinearlo alla stessa base. */
     div[class*="st-key-riga_"] div.stButton {{
         margin-top: 1.6rem;
+    }}
+    div[class*="st-key-riga_"] div.stButton > button {{
+        height: 44px;
     }}
 
     footer {{display: none;}}
@@ -216,7 +249,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 st.markdown(
     """
     <div class="app-header">
-        <h1>Piattaforma di Riclassificazione Finanziaria</h1>
+        <h1>Piattaforma di Riclassificazione Bilancio</h1>
         <p class="app-subtitle">
             Analisi delle situazioni contabili e generazione del modello
             di stima del margine.
