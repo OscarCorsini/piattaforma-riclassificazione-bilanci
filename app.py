@@ -6,6 +6,12 @@ Interfaccia Streamlit per l'automazione della riclassificazione finanziaria
 di bilanci/situazioni contabili aziendali (settore agricolo), tramite
 Groq come motore AI, con output finale in Excel.
 
+Il template Excel e' fisso e incorporato nell'app (template_bilancio.xlsx):
+l'utente non deve piu' caricarlo manualmente. E' possibile elaborare piu'
+anni nella stessa sessione: per ciascun anno si sceglie il periodo da un
+menu a tendina e si caricano i PDF corrispondenti; tutti gli anni vengono
+scritti in un unico file Excel scaricabile.
+
 Avvio:
     streamlit run app.py
 
@@ -16,11 +22,9 @@ Prerequisiti / credenziali:
 
 from __future__ import annotations
 
-import datetime as _dt
-
 import streamlit as st
 
-from config import ANNI_DISPONIBILI
+from config import ANNI_DISPONIBILI, PALETTE
 from pdf_extractor import extract_text_from_multiple_pdfs, PDFExtractionError
 from groq_client import (
     riclassifica_bilancio,
@@ -28,10 +32,10 @@ from groq_client import (
     GroqResponseError,
 )
 from excel_writer import (
-    popola_template_excel,
+    carica_template_predefinito,
     rileva_anni_disponibili,
+    popola_template_multi,
     ExcelTemplateError,
-    ExcelMappingError,
 )
 
 
@@ -45,83 +49,146 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-CUSTOM_CSS = """
+CUSTOM_CSS = f"""
 <style>
-    /* Palette neutra e professionale */
-    :root {
-        --brand-dark: #1a2b3c;
-        --brand-accent: #2f6f4e;
-        --surface: #ffffff;
-        --border-color: #e3e7eb;
-    }
+    :root {{
+        --antracite: {PALETTE['antracite']};
+        --salvia: {PALETTE['salvia']};
+        --tortora: {PALETTE['tortora']};
+        --grigio-chiaro: {PALETTE['grigio_chiaro']};
+        --crema: {PALETTE['crema']};
+        --grigio-sfumato: {PALETTE['grigio_sfumato']};
+        --ocra: {PALETTE['ocra']};
+    }}
 
-    #MainMenu, footer {visibility: hidden;}
+    #MainMenu, footer {{visibility: hidden;}}
 
-    .block-container {
-        max-width: 780px;
-        padding-top: 2.5rem;
+    [data-testid="stAppViewContainer"] {{
+        background-color: var(--crema);
+    }}
+
+    .block-container {{
+        max-width: 820px;
+        padding-top: 2.6rem;
         padding-bottom: 3rem;
-    }
+    }}
 
-    h1, h2, h3 {
-        color: var(--brand-dark);
+    h1, h2, h3 {{
+        color: var(--antracite);
         font-weight: 600;
         letter-spacing: -0.01em;
-    }
+    }}
 
-    .app-header {
-        border-bottom: 1px solid var(--border-color);
-        padding-bottom: 1.2rem;
-        margin-bottom: 2rem;
-    }
+    p, li, span, label {{
+        color: var(--antracite);
+    }}
 
-    .app-subtitle {
-        color: #5b6b7a;
-        font-size: 0.95rem;
-        margin-top: -0.6rem;
-    }
+    .app-header {{
+        border-bottom: 2px solid var(--salvia);
+        padding-bottom: 1.3rem;
+        margin-bottom: 2.2rem;
+    }}
 
-    .section-card {
-        background: var(--surface);
-        border: 1px solid var(--border-color);
-        border-radius: 10px;
-        padding: 1.4rem 1.6rem;
-        margin-bottom: 1.4rem;
-    }
-
-    .step-label {
-        font-size: 0.78rem;
+    .app-eyebrow {{
         text-transform: uppercase;
-        letter-spacing: 0.06em;
-        color: var(--brand-accent);
+        letter-spacing: 0.12em;
+        font-size: 0.72rem;
         font-weight: 700;
-        margin-bottom: 0.3rem;
-    }
+        color: var(--ocra);
+        margin-bottom: 0.4rem;
+    }}
 
-    div.stButton > button {
-        background-color: var(--brand-dark);
+    .app-subtitle {{
+        color: var(--grigio-sfumato);
+        font-size: 0.96rem;
+        margin-top: 0.2rem;
+    }}
+
+    .section-card {{
+        background: #ffffff;
+        border: 1px solid var(--tortora);
+        border-left: 4px solid var(--salvia);
+        border-radius: 12px;
+        padding: 1.5rem 1.7rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 1px 3px rgba(51, 51, 51, 0.05);
+    }}
+
+    .step-label {{
+        display: inline-block;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #ffffff;
+        background-color: var(--antracite);
+        font-weight: 700;
+        padding: 0.18rem 0.6rem;
+        border-radius: 5px;
+        margin-bottom: 0.6rem;
+    }}
+
+    .riga-anno {{
+        background: var(--grigio-chiaro);
+        border: 1px solid var(--tortora);
+        border-radius: 10px;
+        padding: 0.9rem 1rem 0.3rem 1rem;
+        margin-bottom: 0.8rem;
+    }}
+
+    .anni-info {{
+        color: var(--grigio-sfumato);
+        font-size: 0.88rem;
+        font-style: italic;
+    }}
+
+    div.stButton > button {{
+        background-color: var(--antracite);
         color: #ffffff;
         border: none;
         border-radius: 6px;
         padding: 0.55rem 1.4rem;
         font-weight: 500;
         width: 100%;
-    }
-    div.stButton > button:hover {
-        background-color: var(--brand-accent);
+        transition: background-color 0.15s ease;
+    }}
+    div.stButton > button:hover {{
+        background-color: var(--ocra);
         color: #ffffff;
-    }
+    }}
 
-    div[data-testid="stDownloadButton"] > button {
-        background-color: var(--brand-accent);
-        color: #ffffff;
+    div[data-testid="stDownloadButton"] > button {{
+        background-color: var(--salvia);
+        color: var(--antracite);
         border: none;
         border-radius: 6px;
         width: 100%;
-        font-weight: 500;
-    }
+        font-weight: 600;
+    }}
+    div[data-testid="stDownloadButton"] > button:hover {{
+        background-color: var(--ocra);
+        color: #ffffff;
+    }}
 
-    footer {display: none;}
+    [data-testid="stFileUploaderDropzone"] {{
+        background-color: #ffffff;
+        border: 1.5px dashed var(--tortora);
+        border-radius: 8px;
+    }}
+
+    div[data-baseweb="select"] > div {{
+        border-radius: 6px;
+        border-color: var(--tortora);
+    }}
+
+    .mol-block {{
+        background-color: var(--antracite);
+        color: #ffffff;
+        border-radius: 10px;
+        padding: 1.1rem 1.4rem;
+        margin-top: 0.6rem;
+    }}
+
+    footer {{display: none;}}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -133,6 +200,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 st.markdown(
     """
     <div class="app-header">
+        <div class="app-eyebrow">Divisione Agritech</div>
         <h1>Piattaforma di Riclassificazione Finanziaria</h1>
         <p class="app-subtitle">
             Analisi automatica delle situazioni contabili con Groq (AI)
@@ -145,83 +213,112 @@ st.markdown(
 
 
 # ---------------------------------------------------------------------------
-# STEP 1 - CARICAMENTO TEMPLATE
+# CARICAMENTO TEMPLATE PREDEFINITO (fisso, incorporato nell'app)
+# ---------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def _carica_template_e_anni():
+    dati = carica_template_predefinito()
+    anni = rileva_anni_disponibili(dati)
+    return dati, anni
+
+
+try:
+    template_bytes, anni_rilevati = _carica_template_e_anni()
+except ExcelTemplateError as e:
+    st.error(f"**Impossibile caricare il template predefinito.**\n\n{e}")
+    st.stop()
+
+opzioni_anni = anni_rilevati if anni_rilevati else ANNI_DISPONIBILI
+if not anni_rilevati:
+    st.warning(
+        "Non e' stato possibile rilevare automaticamente gli anni dal "
+        "template predefinito: uso l'elenco di default."
+    )
+
+
+# ---------------------------------------------------------------------------
+# STATO: RIGHE ANNO + PDF
+# ---------------------------------------------------------------------------
+if "righe_ids" not in st.session_state:
+    st.session_state.righe_ids = [0]
+if "prossimo_id" not in st.session_state:
+    st.session_state.prossimo_id = 1
+
+
+def _aggiungi_riga():
+    st.session_state.righe_ids.append(st.session_state.prossimo_id)
+    st.session_state.prossimo_id += 1
+
+
+def _rimuovi_riga(riga_id: int):
+    if riga_id in st.session_state.righe_ids:
+        st.session_state.righe_ids.remove(riga_id)
+    if not st.session_state.righe_ids:
+        st.session_state.righe_ids = [st.session_state.prossimo_id]
+        st.session_state.prossimo_id += 1
+
+
+# ---------------------------------------------------------------------------
+# STEP UNICO - SELEZIONE ANNI E CARICAMENTO PDF
 # ---------------------------------------------------------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="step-label">Passo 1</div>', unsafe_allow_html=True)
-st.subheader("Carica il modello Excel (Template)")
-
-template_file = st.file_uploader(
-    "File Excel del modello di stima del margine",
-    type=["xlsx"],
-    key="template_uploader",
-    help="Il file non verra' modificato: verra' generata una copia con i dati popolati.",
+st.markdown('<div class="step-label">Situazioni contabili</div>', unsafe_allow_html=True)
+st.subheader("Seleziona l'anno e carica i documenti")
+st.caption(
+    "Il modello Excel e' quello aziendale standard: non serve caricarlo. "
+    "Puoi elaborare piu' anni nella stessa esecuzione: aggiungi una riga "
+    "per ciascun anno da compilare."
 )
-st.markdown("</div>", unsafe_allow_html=True)
 
-
-# ---------------------------------------------------------------------------
-# STEP 2 - ANNO DI RIFERIMENTO
-# ---------------------------------------------------------------------------
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="step-label">Passo 2</div>', unsafe_allow_html=True)
-st.subheader("Seleziona l'anno di riferimento")
-
-anni_rilevati: list[str] = []
-if template_file is not None:
-    anni_rilevati = rileva_anni_disponibili(template_file)
-
-if anni_rilevati:
-    opzioni_anni = anni_rilevati
-    st.caption("Anni rilevati automaticamente dal template caricato.")
-else:
-    opzioni_anni = ANNI_DISPONIBILI
-    if template_file is not None:
-        st.caption(
-            "Non e' stato possibile rilevare automaticamente gli anni dal "
-            "template: uso l'elenco di default."
+righe_dati = []
+for riga_id in list(st.session_state.righe_ids):
+    st.markdown('<div class="riga-anno">', unsafe_allow_html=True)
+    col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
+    with col_anno:
+        anno_scelto = st.selectbox(
+            "Anno",
+            options=opzioni_anni,
+            key=f"anno_{riga_id}",
         )
+    with col_upload:
+        file_pdf = st.file_uploader(
+            "PDF situazione contabile",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key=f"pdf_{riga_id}",
+        )
+    with col_rimuovi:
+        st.write("")
+        st.button("✕", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
+    st.markdown("</div>", unsafe_allow_html=True)
+    righe_dati.append((anno_scelto, file_pdf))
 
-anno_corrente = str(_dt.date.today().year)
-default_index = opzioni_anni.index(anno_corrente) if anno_corrente in opzioni_anni else 0
-anno_selezionato = st.selectbox(
-    "Anno della situazione contabile",
-    options=opzioni_anni,
-    index=default_index,
-    key="anno_select",
-)
+col_add, col_info = st.columns([2, 5])
+with col_add:
+    st.button("+ Aggiungi un altro anno", on_click=_aggiungi_riga, use_container_width=True)
+with col_info:
+    st.markdown(
+        f'<div class="anni-info">Anni disponibili nel template: {", ".join(opzioni_anni)}</div>',
+        unsafe_allow_html=True,
+    )
+
 st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# STEP 3 - CARICAMENTO PDF
+# STEP FINALE - ELABORAZIONE
 # ---------------------------------------------------------------------------
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="step-label">Passo 3</div>', unsafe_allow_html=True)
-st.subheader("Carica la situazione contabile (PDF)")
+st.markdown('<div class="step-label">Elaborazione</div>', unsafe_allow_html=True)
+st.subheader("Genera il file Excel completato")
 
-pdf_files = st.file_uploader(
-    "Uno o piu' file PDF (bilancio di verifica, mastrini, situazione contabile)",
-    type=["pdf"],
-    accept_multiple_files=True,
-    key="pdf_uploader",
-)
-st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ---------------------------------------------------------------------------
-# STEP 4 - ELABORAZIONE
-# ---------------------------------------------------------------------------
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="step-label">Passo 4</div>', unsafe_allow_html=True)
-st.subheader("Elabora e genera il file finale")
-
-pronto = template_file is not None and pdf_files and len(pdf_files) > 0
+righe_valide = [(anno, files) for anno, files in righe_dati if files]
+pronto = len(righe_valide) > 0
 
 avvia = st.button("Avvia elaborazione", disabled=not pronto, use_container_width=True)
 
 if not pronto:
-    st.caption("Carica il template Excel e almeno un PDF per procedere.")
+    st.caption("Carica almeno un PDF per un anno per procedere.")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -230,27 +327,26 @@ st.markdown("</div>", unsafe_allow_html=True)
 # LOGICA DI ELABORAZIONE
 # ---------------------------------------------------------------------------
 if avvia:
-    try:
-        with st.status("Elaborazione in corso...", expanded=True) as status:
+    risultati_per_anno = {}
+    errori_gruppo = {}
 
-            # --- Fase 1: estrazione testo dai PDF ---
-            status.write("Estrazione testo dai documenti PDF...")
+    with st.status("Elaborazione in corso...", expanded=True) as status:
+        for anno, files in righe_valide:
+            status.write(f"Anno {anno}: estrazione testo dai PDF...")
             try:
-                documenti = extract_text_from_multiple_pdfs(pdf_files)
+                documenti = extract_text_from_multiple_pdfs(files)
             except PDFExtractionError as e:
-                status.update(label="Errore nella lettura del PDF", state="error")
-                st.error(f"**Errore di lettura PDF**\n\n{e}")
-                st.stop()
+                errori_gruppo[anno] = f"Errore di lettura PDF: {e}"
+                continue
 
             testi = [d.text for d in documenti]
             for doc in documenti:
                 for w in doc.warnings:
-                    st.warning(f"'{doc.filename}': {w}")
+                    st.warning(f"Anno {anno} - '{doc.filename}': {w}")
 
-            # --- Fase 2: chiamata a Groq per la riclassificazione ---
-            status.write("Interpretazione e riclassificazione con Groq...")
+            status.write(f"Anno {anno}: riclassificazione con Groq...")
             try:
-                risultato = riclassifica_bilancio(anno_selezionato, testi)
+                risultato = riclassifica_bilancio(anno, testi)
             except GroqConfigError as e:
                 status.update(label="Configurazione Groq mancante", state="error")
                 st.error(
@@ -261,59 +357,57 @@ if avvia:
                 )
                 st.stop()
             except GroqResponseError as e:
-                status.update(label="Risposta Groq non valida", state="error")
-                st.error(f"**Risposta AI non nel formato atteso.**\n\n{e}")
-                st.stop()
+                errori_gruppo[anno] = f"Risposta AI non nel formato atteso: {e}"
+                continue
 
+            risultati_per_anno[anno] = risultato
             if risultato.note:
-                with st.expander("Osservazioni dell'AI sulle voci elaborate"):
+                with st.expander(f"Osservazioni dell'AI - anno {anno}"):
                     for nota in risultato.note:
                         st.write(f"- {nota}")
 
-            # --- Fase 3: scrittura nel template Excel ---
-            status.write("Popolamento del template Excel...")
-            try:
-                buffer, report = popola_template_excel(template_file, anno_selezionato, risultato)
-            except ExcelTemplateError as e:
-                status.update(label="Errore nel file Excel", state="error")
-                st.error(f"**Errore nel template Excel.**\n\n{e}")
-                st.stop()
-            except ExcelMappingError as e:
-                status.update(label="Mapping anno non configurato", state="error")
-                st.error(f"**Configurazione mancante.**\n\n{e}")
-                st.stop()
+        if not risultati_per_anno:
+            status.update(label="Nessun anno elaborato con successo", state="error")
+            for anno, msg in errori_gruppo.items():
+                st.error(f"**Anno {anno}:** {msg}")
+            st.stop()
 
+        status.write("Popolamento del template Excel...")
+        try:
+            buffer, report_per_anno, errori_scrittura = popola_template_multi(
+                template_bytes, risultati_per_anno
+            )
+        except ExcelTemplateError as e:
+            status.update(label="Errore nel file Excel", state="error")
+            st.error(f"**Errore nel template Excel.**\n\n{e}")
+            st.stop()
+
+        for anno, msg in errori_gruppo.items():
+            st.warning(f"Anno {anno} non elaborato: {msg}")
+        for anno, msg in errori_scrittura.items():
+            st.warning(f"Anno {anno} non scritto nel file: {msg}")
+
+        for anno, report in report_per_anno.items():
             if report.voci_non_mappate:
                 st.warning(
-                    "Le seguenti categorie non sono state trovate nel template "
-                    "(probabilmente non presenti in questo modello) e non sono "
-                    "state scritte nel file: " + ", ".join(report.voci_non_mappate)
+                    f"Anno {anno}: le seguenti categorie non sono state trovate "
+                    "nel template e non sono state scritte: "
+                    + ", ".join(report.voci_non_mappate)
                 )
 
-            status.update(
-                label=f"Completato - {report.celle_scritte} celle aggiornate",
-                state="complete",
-            )
-
-        st.success(
-            f"Elaborazione completata. {report.celle_scritte} valori scritti nel "
-            f"foglio '{report.foglio}' per l'anno {anno_selezionato}."
+        totale_celle = sum(r.celle_scritte for r in report_per_anno.values())
+        status.update(
+            label=f"Completato - {totale_celle} celle aggiornate su {len(report_per_anno)} anni",
+            state="complete",
         )
 
-        nome_file_output = f"Riclassificazione_{anno_selezionato}.xlsx"
-        st.download_button(
-            label="Scarica il file Excel completato",
-            data=buffer,
-            file_name=nome_file_output,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+    anni_ok = ", ".join(sorted(report_per_anno.keys()))
+    st.success(f"Elaborazione completata per gli anni: {anni_ok}.")
 
-    except Exception as e:
-        # Rete di sicurezza per qualsiasi errore imprevisto non gia' gestito
-        # dai blocchi specifici sopra: mostra un messaggio chiaro invece di
-        # un traceback grezzo all'utente finale.
-        st.error(
-            "**Si e' verificato un errore imprevisto durante l'elaborazione.**\n\n"
-            f"Dettaglio tecnico: `{type(e).__name__}: {e}`"
-        )
+    st.download_button(
+        label="Scarica il file Excel completato",
+        data=buffer,
+        file_name="Riclassificazione_bilancio.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )

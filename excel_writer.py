@@ -5,24 +5,23 @@ excel_writer.py
 Scrittura dei dati riclassificati nel file Excel "Template" tramite
 openpyxl, senza alterare formule o formattazioni preesistenti.
 
-A differenza di una prima versione basata su un mapping statico
-"categoria -> cella fissa", questo modulo rileva DINAMICAMENTE la
-struttura del template caricato dall'utente:
+Il modulo rileva DINAMICAMENTE la struttura del template (righe delle
+categorie, colonne degli anni) invece di usare un mapping statico, cosi'
+funziona con template reali che possono differire da quello di esempio:
 
   1. Trova la riga di ciascuna categoria cercando l'etichetta testuale
-     nel foglio (es. "Corrispettivi normali"), invece di assumere una
-     cella fissa. Questo funziona con template reali diversi da quello
-     di esempio, che possono avere righe/fogli differenti.
-  2. Rileva la colonna corrispondente all'anno leggendo i valori
-     (calcolati da Excel) nella riga di intestazione degli anni, invece
-     di assumere che l'anno "2024" sia sempre in colonna C o D: molti
-     template reali calcolano gli anni con formule (es. "anno base + 1").
+     nel foglio (es. "Corrispettivi normali").
+  2. Rileva la colonna corrispondente a ciascun anno leggendo i valori
+     calcolati da Excel nella riga di intestazione degli anni (utile
+     quando l'anno e' il risultato di una formula, es. "anno base + 1").
   3. Se la cella di destinazione fa parte di un intervallo di celle unite
-     (merged), scrive nella cella "ancora" (in alto a sinistra
-     dell'intervallo), evitando l'errore di openpyxl sulle MergedCell.
-  4. Se una categoria non viene trovata nel template (es. una sezione
-     "Gestione fiscale IVA" assente in un template semplificato), la
-     segnala come "non mappata" invece di generare un errore bloccante.
+     (merged), scrive nella cella "ancora" (in alto a sinistra).
+  4. Se una categoria non viene trovata nel template, la segnala come
+     "non mappata" invece di generare un errore bloccante.
+
+Supporta inoltre la scrittura di PIU' ANNI in un'unica esecuzione
+(popola_template_multi), aprendo il workbook una sola volta e scrivendo
+tutti gli anni richiesti prima di salvare.
 """
 
 from __future__ import annotations
@@ -31,14 +30,14 @@ import io
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
-from config import SHEET_NAME_RICLASSIFICAZIONE
+from config import SHEET_NAME_RICLASSIFICAZIONE, TEMPLATE_PATH
 from groq_client import RiclassificazioneResult
 
 
@@ -93,12 +92,7 @@ def _trova_riga_categoria(sheet, categoria: str, max_row: int = 300, max_col: in
 
 def _rileva_colonne_anno(sheet_valori, max_row: int = 30, max_col: int = 40) -> Dict[str, str]:
     """Restituisce le colonne-anno {colonna_lettera: anno} della PRIMA riga
-    (dall'alto) che contiene almeno 2 valori interi verosimili come anno.
-    Si usa la prima riga valida (non quella con piu' corrispondenze in
-    assoluto) perche' righe di calcolo piu' in basso nel foglio possono
-    contenere per coincidenza piu' valori simili a un anno (es. colonne di
-    supporto duplicate), mentre l'intestazione vera e propria e'
-    tipicamente la prima che si incontra scorrendo il foglio dall'alto."""
+    (dall'alto) che contiene almeno 2 valori interi verosimili come anno."""
     limite_righe = min(sheet_valori.max_row or max_row, max_row)
     limite_colonne = min(sheet_valori.max_column or max_col, max_col)
 
@@ -125,66 +119,23 @@ def _trova_cella_ancora(sheet, cella_unita):
     return None
 
 
-def _leggi_bytes(template_file) -> bytes:
+def _leggi_bytes(file_like) -> bytes:
     try:
-        template_file.seek(0)
+        file_like.seek(0)
     except Exception:
         pass
-    dati = template_file.read()
+    dati = file_like.read()
     try:
-        template_file.seek(0)
+        file_like.seek(0)
     except Exception:
         pass
     return dati
 
 
-# ---------------------------------------------------------------------------
-# FUNZIONE PUBBLICA: RILEVAMENTO ANNI DISPONIBILI (usata dall'interfaccia)
-# ---------------------------------------------------------------------------
-def rileva_anni_disponibili(template_file) -> List[str]:
-    try:
-        dati = _leggi_bytes(template_file)
-        workbook_valori = openpyxl.load_workbook(io.BytesIO(dati), data_only=True)
-        sheet_valori = _get_sheet(workbook_valori, SHEET_NAME_RICLASSIFICAZIONE)
-        colonne_anno = _rileva_colonne_anno(sheet_valori)
-        anni = sorted(set(colonne_anno.values()))
-        return anni
-    except Exception:
-        return []
-
-
-# ---------------------------------------------------------------------------
-# FUNZIONE PUBBLICA: SCRITTURA DEL TEMPLATE
-# ---------------------------------------------------------------------------
-def popola_template_excel(template_file, anno: str, risultato: RiclassificazioneResult):
-    dati = _leggi_bytes(template_file)
-
-    try:
-        workbook = openpyxl.load_workbook(io.BytesIO(dati), data_only=False, keep_links=True)
-        workbook_valori = openpyxl.load_workbook(io.BytesIO(dati), data_only=True)
-    except InvalidFileException as exc:
-        raise ExcelTemplateError(
-            "Il file caricato non e' un file Excel (.xlsx) valido."
-        ) from exc
-    except Exception as exc:
-        raise ExcelTemplateError(
-            f"Impossibile aprire il file Excel template: {exc}"
-        ) from exc
-
-    sheet = _get_sheet(workbook, SHEET_NAME_RICLASSIFICAZIONE)
-    sheet_valori = _get_sheet(workbook_valori, SHEET_NAME_RICLASSIFICAZIONE)
-
-    colonne_anno = _rileva_colonne_anno(sheet_valori)
-    mappa_anno_colonna = {anno_val: col for col, anno_val in colonne_anno.items()}
-    colonna = mappa_anno_colonna.get(str(anno))
-
-    if colonna is None:
-        anni_trovati = ", ".join(sorted(mappa_anno_colonna.keys())) or "nessuno"
-        raise ExcelMappingError(
-            f"Il template caricato non contiene una colonna per l'anno '{anno}'. "
-            f"Anni individuati automaticamente nel template: {anni_trovati}."
-        )
-
+def _scrivi_valori_anno(sheet, colonna: str, risultato: RiclassificazioneResult) -> WriteReport:
+    """Scrive i valori di UN anno (una colonna) gia' individuata nel foglio
+    gia' aperto. Funzione interna riusata sia dal percorso a singolo anno
+    che da quello multi-anno."""
     valori_da_scrivere = {
         **risultato.entrate,
         **risultato.uscite,
@@ -216,13 +167,105 @@ def popola_template_excel(template_file, anno: str, risultato: Riclassificazione
                 f"Errore scrivendo la categoria '{categoria}' nella cella '{cella.coordinate}': {exc}"
             ) from exc
 
-    buffer = io.BytesIO()
-    workbook.save(buffer)
-    buffer.seek(0)
-
-    report = WriteReport(
+    return WriteReport(
         celle_scritte=celle_scritte,
         voci_non_mappate=voci_non_mappate,
         foglio=sheet.title,
     )
-    return buffer, report
+
+
+# ---------------------------------------------------------------------------
+# FUNZIONE PUBBLICA: TEMPLATE PREDEFINITO
+# ---------------------------------------------------------------------------
+def carica_template_predefinito() -> bytes:
+    """Legge dal disco il template Excel fisso distribuito con l'app."""
+    try:
+        with open(TEMPLATE_PATH, "rb") as f:
+            return f.read()
+    except Exception as exc:
+        raise ExcelTemplateError(
+            f"Impossibile leggere il template predefinito ({TEMPLATE_PATH}): {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# FUNZIONE PUBBLICA: RILEVAMENTO ANNI DISPONIBILI
+# ---------------------------------------------------------------------------
+def rileva_anni_disponibili(template_bytes: bytes) -> List[str]:
+    try:
+        workbook_valori = openpyxl.load_workbook(io.BytesIO(template_bytes), data_only=True)
+        sheet_valori = _get_sheet(workbook_valori, SHEET_NAME_RICLASSIFICAZIONE)
+        colonne_anno = _rileva_colonne_anno(sheet_valori)
+        return sorted(set(colonne_anno.values()))
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# FUNZIONE PUBBLICA: SCRITTURA MULTI-ANNO (usata dall'interfaccia)
+# ---------------------------------------------------------------------------
+def popola_template_multi(
+    template_bytes: bytes,
+    risultati_per_anno: Dict[str, RiclassificazioneResult],
+) -> Tuple[io.BytesIO, Dict[str, WriteReport], Dict[str, str]]:
+    """
+    Apre il template UNA SOLA VOLTA e scrive i dati di piu' anni nello
+    stesso file, restituendo un unico buffer scaricabile.
+
+    Restituisce (buffer, report_per_anno, errori_per_anno): gli anni scritti
+    con successo compaiono in report_per_anno, quelli per cui non e' stata
+    trovata una colonna nel template compaiono in errori_per_anno (senza
+    interrompere l'elaborazione degli altri anni).
+    """
+    try:
+        workbook = openpyxl.load_workbook(io.BytesIO(template_bytes), data_only=False, keep_links=True)
+        workbook_valori = openpyxl.load_workbook(io.BytesIO(template_bytes), data_only=True)
+    except InvalidFileException as exc:
+        raise ExcelTemplateError(
+            "Il file template non e' un file Excel (.xlsx) valido."
+        ) from exc
+    except Exception as exc:
+        raise ExcelTemplateError(
+            f"Impossibile aprire il file Excel template: {exc}"
+        ) from exc
+
+    sheet = _get_sheet(workbook, SHEET_NAME_RICLASSIFICAZIONE)
+    sheet_valori = _get_sheet(workbook_valori, SHEET_NAME_RICLASSIFICAZIONE)
+
+    colonne_anno = _rileva_colonne_anno(sheet_valori)
+    mappa_anno_colonna = {anno_val: col for col, anno_val in colonne_anno.items()}
+
+    report_per_anno: Dict[str, WriteReport] = {}
+    errori_per_anno: Dict[str, str] = {}
+
+    for anno, risultato in risultati_per_anno.items():
+        colonna = mappa_anno_colonna.get(str(anno))
+        if colonna is None:
+            anni_trovati = ", ".join(sorted(mappa_anno_colonna.keys())) or "nessuno"
+            errori_per_anno[anno] = (
+                f"Il template non contiene una colonna per l'anno '{anno}'. "
+                f"Anni individuati automaticamente nel template: {anni_trovati}."
+            )
+            continue
+        report_per_anno[anno] = _scrivi_valori_anno(sheet, colonna, risultato)
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+
+    return buffer, report_per_anno, errori_per_anno
+
+
+# ---------------------------------------------------------------------------
+# FUNZIONE PUBBLICA: SCRITTURA A SINGOLO ANNO (compatibilita')
+# ---------------------------------------------------------------------------
+def popola_template_excel(template_file, anno: str, risultato: RiclassificazioneResult):
+    """Variante a singolo anno, mantenuta per compatibilita': internamente
+    usa lo stesso motore multi-anno con un solo elemento."""
+    dati = _leggi_bytes(template_file)
+    buffer, report_per_anno, errori_per_anno = popola_template_multi(dati, {anno: risultato})
+
+    if anno in errori_per_anno:
+        raise ExcelMappingError(errori_per_anno[anno])
+
+    return buffer, report_per_anno[anno]

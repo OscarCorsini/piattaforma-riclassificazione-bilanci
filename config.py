@@ -6,18 +6,12 @@ Configurazione centrale della piattaforma di riclassificazione finanziaria.
 
 Qui sono definiti:
   - Le macro-categorie contabili (Entrate / Uscite / Gestione Fiscale)
-  - La mappatura "categoria -> cella Excel" per ciascun anno gestito dal template
+  - Il percorso del template Excel predefinito (fisso, incorporato nell'app)
   - Le impostazioni di connessione a Groq (motore AI)
-
-IMPORTANTE:
-  Il mapping "CELL_MAPPING" sotto riportato e' un ESEMPIO basato sulla struttura
-  descritta nei requisiti. Deve essere adattato alle celle REALI del file
-  "Template.xlsx" fornito dall'azienda (foglio e indirizzo cella).
-  Il modo piu' semplice per adattarlo e' aprire il template, individuare la riga
-  di ciascuna voce e la colonna corrispondente all'anno, e aggiornare i valori
-  qui sotto (es. "C15" per anno 2024, "D15" per anno 2025, ecc.).
+  - La palette colori usata nell'interfaccia
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List
 
@@ -57,64 +51,24 @@ GESTIONE_FISCALE_CATEGORIE: List[str] = [
 
 
 # ---------------------------------------------------------------------------
-# 2. MAPPING CELLE EXCEL (foglio + cella per ciascun anno)
+# 2. TEMPLATE EXCEL PREDEFINITO (fisso, incorporato nell'app)
 # ---------------------------------------------------------------------------
+# Il file "template_bilancio.xlsx" e' distribuito insieme al codice
+# dell'app (stessa cartella): l'utente non deve piu' caricarlo ogni volta.
+# La struttura del foglio (righe delle categorie, colonne degli anni) viene
+# rilevata dinamicamente da excel_writer.py leggendo etichette e valori
+# calcolati, quindi funziona anche se in futuro il template viene
+# aggiornato con righe/colonne diverse.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(BASE_DIR, "template_bilancio.xlsx")
+
+# Nome del foglio su cui si trovano le voci di riclassificazione (usato
+# come preferenza; se non esiste, l'app usa comunque il foglio attivo).
 SHEET_NAME_RICLASSIFICAZIONE = "Riclassificazione"
-SHEET_NAME_GESTIONE_FISCALE = "Riclassificazione"  # stessa scheda, tabella laterale
 
-# Mappa: {anno: {categoria: cella}}
-# ATTENZIONE: valori di esempio, da adattare al template reale.
-CELL_MAPPING: Dict[str, Dict[str, str]] = {
-    "2024": {
-        "Corrispettivi normali": "C6",
-        "Attivita' connessa": "C7",
-        "PAC e contributi pubblici": "C8",
-        "Gestione fiscale": "C9",
-        "Variazione rimanenze": "C10",
-        "Altro": "C11",
-        "Materie prime e merci": "C15",
-        "Servizi": "C16",
-        "Leasing": "C17",
-        "Altri acquisti": "C18",
-        "Affitti": "C19",
-        "Salari lordi dip.": "C20",
-        "Prelievi titolare": "C21",
-        "Contributi prev.": "C22",
-        "Assicurazioni": "C23",
-        "Taglie acqua irrigua": "C24",
-        "Oneri diversi di gestione": "C25",
-        "Iva vendite (VE26)": "H6",
-        "Iva acquisti (VF27)": "H7",
-        "Imposta dovuta (VL3)": "H8",
-        "Netto gestione": "H9",
-    },
-    "2025": {
-        "Corrispettivi normali": "D6",
-        "Attivita' connessa": "D7",
-        "PAC e contributi pubblici": "D8",
-        "Gestione fiscale": "D9",
-        "Variazione rimanenze": "D10",
-        "Altro": "D11",
-        "Materie prime e merci": "D15",
-        "Servizi": "D16",
-        "Leasing": "D17",
-        "Altri acquisti": "D18",
-        "Affitti": "D19",
-        "Salari lordi dip.": "D20",
-        "Prelievi titolare": "D21",
-        "Contributi prev.": "D22",
-        "Assicurazioni": "D23",
-        "Taglie acqua irrigua": "D24",
-        "Oneri diversi di gestione": "D25",
-        "Iva vendite (VE26)": "I6",
-        "Iva acquisti (VF27)": "I7",
-        "Imposta dovuta (VL3)": "I8",
-        "Netto gestione": "I9",
-    },
-}
-
-# Anni selezionabili in interfaccia.
-ANNI_DISPONIBILI: List[str] = list(CELL_MAPPING.keys())
+# Elenco anni di fallback, usato SOLO se il rilevamento automatico degli
+# anni dal template fallisce per qualche motivo.
+ANNI_DISPONIBILI: List[str] = ["2024", "2025"]
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +108,22 @@ def _env(key: str, default: str) -> str:
     except Exception:
         pass
 
-    import os
     return os.environ.get(key, default)
 
 
 # Istanza di configurazione usata dall'applicazione.
 GROQ_CONFIG = GroqConfig()
+
+
+# ---------------------------------------------------------------------------
+# 4. PALETTE COLORI (interfaccia utente)
+# ---------------------------------------------------------------------------
+PALETTE: Dict[str, str] = {
+    "antracite": "#333333",     # Intestazioni principali, blocco finale
+    "salvia": "#99B0A3",        # Elementi di spicco, accenti, macro-sezioni
+    "tortora": "#D7D4D1",       # Bordi, tono medio
+    "grigio_chiaro": "#E7E9E2", # Sfondi neutri delle card
+    "crema": "#FDFBF7",         # Sfondo pagina
+    "grigio_sfumato": "#787878",# Testo secondario
+    "ocra": "#B87333",          # Accento caldo (hover, evidenze)
+}
