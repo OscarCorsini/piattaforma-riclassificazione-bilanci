@@ -21,7 +21,7 @@ import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
 from config import CELL_MAPPING, SHEET_NAME_RICLASSIFICAZIONE
-from copilot_client import RiclassificazioneResult
+from gemini_client import RiclassificazioneResult
 
 
 class ExcelTemplateError(Exception):
@@ -34,7 +34,7 @@ class ExcelMappingError(Exception):
 
 @dataclass
 class WriteReport:
-    """Riepilogo di ciò che è stato scritto, utile per un feedback chiaro in UI."""
+    """Riepilogo di cio' che e' stato scritto, utile per un feedback chiaro in UI."""
     celle_scritte: int
     voci_non_mappate: List[str]
     foglio: str
@@ -53,7 +53,7 @@ def popola_template_excel(template_file, anno: str, risultato: Riclassificazione
     Apre il template Excel caricato dall'utente, scrive i valori
     riclassificati nelle celle corrispondenti all'anno selezionato e
     restituisce un buffer in memoria pronto per il download, insieme a un
-    report di cosa è stato effettivamente scritto.
+    report di cosa e' stato effettivamente scritto.
     """
     if anno not in CELL_MAPPING:
         raise ExcelMappingError(
@@ -66,7 +66,7 @@ def popola_template_excel(template_file, anno: str, risultato: Riclassificazione
         workbook = openpyxl.load_workbook(template_file, data_only=False, keep_links=True)
     except InvalidFileException as exc:
         raise ExcelTemplateError(
-            "Il file caricato non è un file Excel (.xlsx) valido."
+            "Il file caricato non e' un file Excel (.xlsx) valido."
         ) from exc
     except Exception as exc:
         raise ExcelTemplateError(
