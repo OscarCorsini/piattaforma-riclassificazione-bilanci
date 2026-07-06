@@ -132,6 +132,35 @@ REGOLE:
    imposta dovuta VL3, netto gestione) SOLO se esplicitamente presenti nel
    documento; altrimenti restituisci 0.0.
 
+ESEMPIO PRATICO (i documenti reali sono spesso bilanci di verifica con
+codici conto in stile "66/25/010" seguiti da una descrizione abbreviata
+in maiuscolo e un importo). Se il testo estratto contiene righe come:
+
+  CONTO       DESCRIZIONE CONTO                       Costi
+  66/25/005   MERCI C/ACQUISTI                       500.000,00
+  66/25/010   MERCI C/ACQUISTI - CARBURANTI            40.000,00
+  66/54/001   ACQ. CEREALI E FORAGGI                  120.000,00
+  68/05/021   LAVORAZ.DI TERZI P/PROD.SERVIZI           30.000,00
+  68/05/025   ENERGIA ELETTRICA                         25.000,00
+  68/05/055   MANUT.E RIPARAZ.BENI PROPRI 5%            60.000,00
+  68/05/407   ALTRI COSTI PER SERVIZI                   10.000,00
+  70/10/005   CANONI DI LEASING BENI MOB. DED.          15.000,00
+
+NON DEVI sommare tutto questo sotto "Materie Prime e Merci" o "Servizi"
+solo perche' nel bilancio sono voci vicine o simili come formato di riga.
+La scomposizione corretta e':
+  - "MERCI C/ACQUISTI" (senza suffisso) -> "Materie Prime e Merci": 500000.0
+  - "MERCI C/ACQUISTI - CARBURANTI" -> "Carburanti": 40000.0
+  - "ACQ. CEREALI E FORAGGI" -> "Mangimi e Foraggi": 120000.0
+  - "LAVORAZ.DI TERZI P/PROD.SERVIZI" -> "Lavorazioni c/terzi": 30000.0
+  - "ENERGIA ELETTRICA" -> "Energia elettrica": 25000.0
+  - "MANUT.E RIPARAZ.BENI PROPRI" -> "Manutenzioni": 60000.0
+  - "ALTRI COSTI PER SERVIZI" -> "Servizi": 10000.0
+  - "CANONI DI LEASING BENI MOB." -> "Leasing": 15000.0
+Ogni riga del bilancio di verifica, anche se il codice conto o la
+descrizione sembrano generici, va valutata singolarmente in base al
+SIGNIFICATO della descrizione, non alla sua posizione nel documento.
+
 FORMATO DI OUTPUT (OBBLIGATORIO):
 Rispondi ESCLUSIVAMENTE con un oggetto JSON valido, senza testo aggiuntivo,
 commenti, markdown o backtick. Parti ESATTAMENTE da questo scaffold,
@@ -253,41 +282,4 @@ def _parse_response(raw: str) -> RiclassificazioneResult:
     gestione_fiscale = _to_float_dict(data.get("gestione_fiscale", {}))
 
     # Rete di sicurezza: indipendentemente da quanto il modello rispetti lo
-    # scaffold richiesto, garantiamo comunque che OGNI categoria configurata
-    # sia presente nel risultato finale (0.0 se il modello non l'ha
-    # restituita). Cosi' il conteggio "celle aggiornate" riflette sempre la
-    # lista completa di config.py, ed e' immediato distinguere "categoria
-    # non trovata nel documento" (0.0 scritto) da "categoria non mappata nel
-    # template Excel" (segnalata a parte da excel_writer.py).
-    for categoria in ENTRATE_CATEGORIE:
-        entrate.setdefault(categoria, 0.0)
-    for categoria in USCITE_CATEGORIE:
-        uscite.setdefault(categoria, 0.0)
-    for categoria in GESTIONE_FISCALE_CATEGORIE:
-        gestione_fiscale.setdefault(categoria, 0.0)
-
-    return RiclassificazioneResult(
-        entrate=entrate,
-        uscite=uscite,
-        gestione_fiscale=gestione_fiscale,
-        note=list(data.get("note", []) or []),
-    )
-
-
-# ---------------------------------------------------------------------------
-# FUNZIONE PUBBLICA
-# ---------------------------------------------------------------------------
-def riclassifica_bilancio(anno: str, testi_pdf: List[str]) -> RiclassificazioneResult:
-    """
-    Punto di ingresso principale del modulo: prende il testo estratto dai
-    PDF caricati e restituisce l'oggetto RiclassificazioneResult con i
-    valori standardizzati pronti per essere scritti nel file Excel.
-
-    Solleva GroqConfigError se la chiave API non e' impostata, e
-    GroqResponseError se la risposta non rispetta il formato atteso.
-    """
-    system_prompt = _build_system_prompt()
-    user_prompt = _build_user_prompt(anno, testi_pdf)
-
-    raw_response = _call_model(system_prompt, user_prompt)
-    return _parse_response(raw_response)
+    # scaffold richiesto, garan
