@@ -307,6 +307,17 @@ def popola_template_multi(
             continue
         report_per_anno[anno] = _scrivi_valori_anno(sheet, colonna, risultato)
 
+    # Forza Excel a ricalcolare TUTTE le formule all'apertura del file:
+    # openpyxl non calcola le formule mentre scrive, quindi le celle di
+    # subtotale/totale (es. "Acquisti ordinari", "Totale uscite", "M.O.L.")
+    # manterrebbero il valore memorizzato nel template originale finche'
+    # non viene forzato un ricalcolo completo, risultando vuote o non
+    # aggiornate quando l'utente apre il file scaricato.
+    try:
+        workbook.calculation.fullCalcOnLoad = True
+    except Exception:
+        pass
+
     buffer = io.BytesIO()
     workbook.save(buffer)
     buffer.seek(0)
@@ -316,14 +327,4 @@ def popola_template_multi(
 
 # ---------------------------------------------------------------------------
 # FUNZIONE PUBBLICA: SCRITTURA A SINGOLO ANNO (compatibilita')
-# ---------------------------------------------------------------------------
-def popola_template_excel(template_file, anno: str, risultato: RiclassificazioneResult):
-    """Variante a singolo anno, mantenuta per compatibilita': internamente
-    usa lo stesso motore multi-anno con un solo elemento."""
-    dati = _leggi_bytes(template_file)
-    buffer, report_per_anno, errori_per_anno = popola_template_multi(dati, {anno: risultato})
-
-    if anno in errori_per_anno:
-        raise ExcelMappingError(errori_per_anno[anno])
-
-    return buffer, report_per_anno[anno]
+# ------------------------------------------------

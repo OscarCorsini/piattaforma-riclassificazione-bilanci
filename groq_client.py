@@ -60,6 +60,10 @@ def _build_system_prompt() -> str:
     uscite = "\n".join(f"  - {c}" for c in USCITE_CATEGORIE)
     fiscale = "\n".join(f"  - {c}" for c in GESTIONE_FISCALE_CATEGORIE)
 
+    scaffold_entrate = ",\n".join(f'    "{c}": 0.0' for c in ENTRATE_CATEGORIE)
+    scaffold_uscite = ",\n".join(f'    "{c}": 0.0' for c in USCITE_CATEGORIE)
+    scaffold_fiscale = ",\n".join(f'    "{c}": 0.0' for c in GESTIONE_FISCALE_CATEGORIE)
+
     return f"""Sei un assistente esperto di contabilita' agraria e bilanci d'esercizio.
 Il tuo compito e' leggere una situazione contabile (bilancio di verifica,
 mastrini, estratto conto economico) fornita come testo estratto da PDF e
@@ -77,7 +81,14 @@ GESTIONE FISCALE (dati IVA/imposte, se presenti nel documento):
 {fiscale}
 
 REGOLE:
-1. Analizza tutte le voci di ricavo e costo presenti nel testo.
+1. Analizza OGNI SINGOLA voce di ricavo e costo presente nel testo, riga
+   per riga, prima di sommare per categoria. Non limitarti a leggere i
+   totali aggregati gia' presenti nel documento (es. "Servizi", "Materie
+   prime"): se il documento elenca le singole voci che li compongono
+   (es. "Enel Energia", "gasolio", "mangimi zootecnici", "manutenzione
+   trattore"), DEVI scomporle nella categoria specifica corrispondente,
+   anche se nel documento originale sono gia' raggruppate sotto una voce
+   piu' generica.
 2. Assegna ciascuna voce alla macro-categoria piu' appropriata secondo la
    logica del settore agricolo. Usa le voci PIU' SPECIFICHE disponibili
    invece di categorie generiche, in particolare per le uscite:
@@ -90,8 +101,10 @@ REGOLE:
    - concimi, fitofarmaci, materie prime generiche non altrimenti
      classificabili -> "Materie Prime e Merci"
    - altri acquisti minori non riconducibili alle voci sopra -> "Altri"
-   - bollette elettriche, energia elettrica -> "Energia elettrica"
-   - manutenzione macchinari, impianti, fabbricati -> "Manutenzioni"
+   - bollette elettriche, energia elettrica, fornitori come Enel/Eni/A2A/
+     Edison/Sorgenia -> "Energia elettrica"
+   - manutenzione macchinari, impianti, fabbricati, officina, ricambi
+     -> "Manutenzioni"
    - lavorazioni conto terzi (contoterzismo passivo, es. mietitrebbiatura
      conto terzi) -> "Lavorazioni c/terzi"
    - consulenze, servizi professionali, altri servizi generici non
@@ -108,8 +121,11 @@ REGOLE:
 3. Se una voce e' ambigua o non chiaramente riconducibile a una categoria,
    inseriscila in "Altro" (per le entrate) o "Oneri diversi di gestione"
    (per le uscite), e segnalalo in "note".
-4. Se non trovi dati per una categoria, restituisci 0.0 per quella
-   categoria (non ometterla).
+4. OBBLIGATORIO: la risposta deve contenere SEMPRE tutte le categorie
+   elencate sopra, una per una, senza ometterne nessuna. Se per una
+   categoria non trovi alcun dato nel testo, restituisci 0.0 per quella
+   categoria: non eliminarla e non accorpare il suo importo altrove solo
+   per comodita'.
 5. Tutti gli importi devono essere numeri (float), positivi, espressi in
    euro, senza simboli di valuta ne' separatori delle migliaia.
 6. Estrai i dati di gestione fiscale (IVA vendite VE26, IVA acquisti VF27,
@@ -118,12 +134,20 @@ REGOLE:
 
 FORMATO DI OUTPUT (OBBLIGATORIO):
 Rispondi ESCLUSIVAMENTE con un oggetto JSON valido, senza testo aggiuntivo,
-commenti, markdown o backtick, con questa struttura esatta:
+commenti, markdown o backtick. Parti ESATTAMENTE da questo scaffold,
+mantenendo tutte le chiavi presenti (non aggiungerne, non rimuoverne) e
+sostituendo solo i valori 0.0 con gli importi che trovi nel documento:
 
 {{
-  "entrate": {{ "<categoria>": <valore_numerico>, ... }},
-  "uscite": {{ "<categoria>": <valore_numerico>, ... }},
-  "gestione_fiscale": {{ "<categoria>": <valore_numerico>, ... }},
+  "entrate": {{
+{scaffold_entrate}
+  }},
+  "uscite": {{
+{scaffold_uscite}
+  }},
+  "gestione_fiscale": {{
+{scaffold_fiscale}
+  }},
   "note": ["<eventuali osservazioni sulle voci ambigue o mancanti>"]
 }}
 """
@@ -224,10 +248,28 @@ def _parse_response(raw: str) -> RiclassificazioneResult:
                 result[k] = 0.0
         return result
 
+    entrate = _to_float_dict(data.get("entrate", {}))
+    uscite = _to_float_dict(data.get("uscite", {}))
+    gestione_fiscale = _to_float_dict(data.get("gestione_fiscale", {}))
+
+    # Rete di sicurezza: indipendentemente da quanto il modello rispetti lo
+    # scaffold richiesto, garantiamo comunque che OGNI categoria configurata
+    # sia presente nel risultato finale (0.0 se il modello non l'ha
+    # restituita). Cosi' il conteggio "celle aggiornate" riflette sempre la
+    # lista completa di config.py, ed e' immediato distinguere "categoria
+    # non trovata nel documento" (0.0 scritto) da "categoria non mappata nel
+    # template Excel" (segnalata a parte da excel_writer.py).
+    for categoria in ENTRATE_CATEGORIE:
+        entrate.setdefault(categoria, 0.0)
+    for categoria in USCITE_CATEGORIE:
+        uscite.setdefault(categoria, 0.0)
+    for categoria in GESTIONE_FISCALE_CATEGORIE:
+        gestione_fiscale.setdefault(categoria, 0.0)
+
     return RiclassificazioneResult(
-        entrate=_to_float_dict(data.get("entrate", {})),
-        uscite=_to_float_dict(data.get("uscite", {})),
-        gestione_fiscale=_to_float_dict(data.get("gestione_fiscale", {})),
+        entrate=entrate,
+        uscite=uscite,
+        gestione_fiscale=gestione_fiscale,
         note=list(data.get("note", []) or []),
     )
 
