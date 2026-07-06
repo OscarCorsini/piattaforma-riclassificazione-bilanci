@@ -79,15 +79,32 @@ GESTIONE FISCALE (dati IVA/imposte, se presenti nel documento):
 REGOLE:
 1. Analizza tutte le voci di ricavo e costo presenti nel testo.
 2. Assegna ciascuna voce alla macro-categoria piu' appropriata secondo la
-   logica del settore agricolo (es. vendita latte/carne/cereali ->
-   "Corrispettivi normali"; agriturismo/contoterzismo attivo/vendita
-   energia -> "Attivita' connessa"; PSR/PAC/contributi regionali -> "PAC e
-   contributi pubblici"; canoni leasing macchinari -> "Leasing"; affitto
-   terreni/fabbricati -> "Affitti"; costo dipendenti -> "Salari lordi
-   dip."; compensi titolare/soci -> "Prelievi titolare"; INPS/Ex-Scau ->
-   "Contributi prev."; polizze grandine/RC -> "Assicurazioni"; consorzi di
-   bonifica -> "Taglie acqua irrigua"; tutto il resto non classificabile
-   -> "Altro" o "Oneri diversi di gestione").
+   logica del settore agricolo. Usa le voci PIU' SPECIFICHE disponibili
+   invece di categorie generiche, in particolare per le uscite:
+   - vendita latte/carne/cereali -> "Corrispettivi normali"
+   - agriturismo/contoterzismo attivo/vendita energia -> "Attivita' connessa"
+   - PSR/PAC/contributi regionali -> "PAC e contributi pubblici"
+   - mangimi, foraggi, alimenti per il bestiame -> "Mangimi e Foraggi"
+   - gasolio agricolo, benzina, carburanti per mezzi -> "Carburanti"
+   - sementi, piantine, materiale di semina -> "Sementi"
+   - concimi, fitofarmaci, materie prime generiche non altrimenti
+     classificabili -> "Materie Prime e Merci"
+   - altri acquisti minori non riconducibili alle voci sopra -> "Altri"
+   - bollette elettriche, energia elettrica -> "Energia elettrica"
+   - manutenzione macchinari, impianti, fabbricati -> "Manutenzioni"
+   - lavorazioni conto terzi (contoterzismo passivo, es. mietitrebbiatura
+     conto terzi) -> "Lavorazioni c/terzi"
+   - consulenze, servizi professionali, altri servizi generici non
+     riconducibili alle voci sopra -> "Servizi"
+   - canoni leasing macchinari -> "Leasing"
+   - affitto terreni/fabbricati -> "Affitti"
+   - costo dipendenti -> "Salari lordi dip."
+   - compensi titolare/soci -> "Prelievi titolare"
+   - contributi INPS/Ex-Scau -> "Contributi prev."
+   - polizze grandine/RC/assicurazioni -> "Assicurazioni"
+   - consorzi di bonifica, canoni irrigui -> "Taglie acqua irrigua"
+   - tutto il resto non classificabile -> "Altro" (entrate) o "Oneri
+     diversi di gestione" (uscite)
 3. Se una voce e' ambigua o non chiaramente riconducibile a una categoria,
    inseriscila in "Altro" (per le entrate) o "Oneri diversi di gestione"
    (per le uscite), e segnalalo in "note".

@@ -24,15 +24,29 @@ ENTRATE_CATEGORIE: List[str] = [
     "Attivita' connessa",
     "PAC e contributi pubblici",
     "Gestione fiscale",
-    "Variazione rimanenze",
     "Altro",
 ]
 
+# Voci di uscita dettagliate: i nomi devono corrispondere ESATTAMENTE
+# (a meno di maiuscole/minuscole) alle etichette presenti nel template
+# Excel, perche' excel_writer.py cerca la riga giusta confrontando il
+# testo normalizzato. Il template attuale ha alcune voci di "Acquisti
+# ordinari" e "servizi" scomposte in dettaglio (es. Energia elettrica,
+# Manutenzioni, Lavorazioni c/terzi, Mangimi e Foraggi, Carburanti,
+# Sementi): se una di queste non compare qui, Groq non la usera' mai e
+# la relativa spesa finira' accorpata genericamente in "Servizi" o
+# "Materie Prime e Merci" invece di andare nella riga specifica.
 USCITE_CATEGORIE: List[str] = [
-    "Materie prime e merci",
+    "Materie Prime e Merci",
+    "Mangimi e Foraggi",
+    "Carburanti",
+    "Sementi",
+    "Altri",
     "Servizi",
+    "Energia elettrica",
+    "Manutenzioni",
+    "Lavorazioni c/terzi",
     "Leasing",
-    "Altri acquisti",
     "Affitti",
     "Salari lordi dip.",
     "Prelievi titolare",
