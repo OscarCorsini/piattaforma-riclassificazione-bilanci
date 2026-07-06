@@ -90,12 +90,29 @@ REGOLE DI ESTRAZIONE:
 3. NON limitarti alle righe di "TOTALE"/"PROGRESSIVO": quelle sono
    riepiloghi e vanno IGNORATE (non estratte come voci), altrimenti gli
    importi verrebbero conteggiati due volte.
-4. Per ogni voce riporta il testo della descrizione ESATTAMENTE come
+4. ATTENZIONE ALLA GERARCHIA DEI CODICI CONTO: molti bilanci di verifica
+   hanno una struttura a piu' livelli, dove un codice piu' corto e' il
+   SUBTOTALE dei codici piu' lunghi che iniziano allo stesso modo. Esempio
+   reale:
+     3.66      COSTI P/MAT. PRI. SUSS. CON. E MER.      342.546,13
+     3.66.05   MATERIE PRIME                             91.681,29
+     3.66.05.001  MATERIE PRIME CONTO ACQUISTO UVA        51.000,00
+     3.66.05.002  MATERIE PRIME PER LAVORAZIONE VINO      40.681,29
+   In questo esempio "3.66" e "3.66.05" sono SUBTOTALI (la somma delle
+   righe piu' specifiche sotto di loro): NON vanno estratti come voci,
+   altrimenti gli stessi importi verrebbero conteggiati piu' volte. Estrai
+   SEMPRE E SOLO le righe con il codice PIU' LUNGO/SPECIFICO che non ha a
+   sua volta ulteriori sotto-righe (nell'esempio: solo le due righe
+   "3.66.05.001" e "3.66.05.002", MAI "3.66" ne' "3.66.05"). Applica questa
+   stessa logica a ogni gruppo gerarchico del documento, sia in ENTRATE che
+   in USCITE. Se un codice non ha alcuna sotto-riga piu' specifica sotto di
+   se' (e' gia' un dato di dettaglio), estrai quello.
+5. Per ogni voce riporta il testo della descrizione ESATTAMENTE come
    appare nel documento (mantieni abbreviazioni, maiuscole, codici conto se
    utile per il contesto), l'importo come numero (positivo, senza simboli
    di valuta ne' separatori delle migliaia) e "tipo": "entrata" se la voce
    e' un ricavo/provento, "uscita" se e' un costo/onere.
-5. Estrai i dati di gestione fiscale (IVA vendite VE26, IVA acquisti VF27,
+6. Estrai i dati di gestione fiscale (IVA vendite VE26, IVA acquisti VF27,
    imposta dovuta VL3, netto gestione) SOLO se esplicitamente presenti nel
    documento, nelle categorie:
 {fiscale}

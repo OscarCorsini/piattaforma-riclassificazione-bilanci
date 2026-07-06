@@ -38,12 +38,22 @@ def _extract_with_pdfplumber(file_obj) -> Optional[str]:
                 page_text = page.extract_text() or ""
                 parts.append(page_text)
 
-                # Estrae anche le tabelle in forma testuale semplice, utile
-                # perche' le situazioni contabili sono spesso tabellari.
-                for table in page.extract_tables():
-                    for row in table:
-                        clean_row = [str(c) if c is not None else "" for c in row]
-                        parts.append(" | ".join(clean_row))
+                # Estrae anche le tabelle in forma testuale semplice, ma
+                # SOLO come ripiego per le pagine dove extract_text() non ha
+                # restituito contenuto utile (es. PDF con layout tabellare
+                # complesso che confonde l'estrazione lineare). Se il testo
+                # lineare e' gia' presente, NON duplicare le stesse voci
+                # anche come dump di tabella: per bilanci con molte righe
+                # questo raddoppiava (e sporcava con celle vuote separate da
+                # "|") il testo inviato all'AI, rendendo l'estrazione delle
+                # singole voci molto meno affidabile.
+                if len(page_text.strip()) < 40:
+                    for table in page.extract_tables():
+                        for row in table:
+                            clean_row = [str(c) if c is not None else "" for c in row]
+                            riga = " | ".join(clean_row).strip(" |")
+                            if riga:
+                                parts.append(riga)
         text = "\n".join(parts).strip()
         return text if text else None
     except Exception:

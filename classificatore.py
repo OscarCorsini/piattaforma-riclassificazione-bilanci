@@ -79,9 +79,11 @@ REGOLE_USCITE: List[Tuple[str, str]] = [
 ]
 
 REGOLE_ENTRATE: List[Tuple[str, str]] = [
-    (r"vendita|corrispettiv|cession", "Corrispettivi normali"),
-    (r"agrituris|contoterzis.*attiv|vendita energia|fotovoltaic", "Attivita' connessa"),
-    (r"\bpac\b|\bpsr\b|contributi.*region|contributi.*pubblic", "PAC e contributi pubblici"),
+    (r"vendita|vendite|corrispettiv|cession|merci conto vendite|bottiglie conto vendite",
+     "Corrispettivi normali"),
+    (r"agrituris|contoterzis.*attiv|vendita energia|fotovoltaic|prestazio|noleggi|"
+     r"riaddebito|fitti attivi|deposito", "Attivita' connessa"),
+    (r"\bpac\b|\bpsr\b|contribut", "PAC e contributi pubblici"),
     (r"\biva\b|imposta|fiscal", "Gestione fiscale"),
 ]
 
