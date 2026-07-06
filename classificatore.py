@@ -26,10 +26,13 @@ La soluzione adottata e' un approccio IBRIDO:
      Essendo puro codice Python, il risultato e' sempre deterministico e
      ripetibile: stesso testo in ingresso, stessa classificazione in uscita.
 
-Le regole sono state costruite e verificate sulla struttura tipica di un
-bilancio di verifica italiano (codici conto tipo "66/25/010" seguiti da una
-descrizione abbreviata in maiuscolo, es. "MERCI C/ACQUISTI - CARBURANTI",
-"ACQ. CEREALI E FORAGGI", "LAVORAZ.DI TERZI P/PROD.SERVIZI").
+Le regole sono state costruite analizzando OLTRE 100 bilanci reali di
+aziende agricole italiane (bilanci di verifica, conti economici, situazioni
+contabili di aziende zootecniche, vitivinicole, cerealicole) presenti nella
+cartella condivisa dall'utente, per intercettare la terminologia realmente
+usata (es. "COSTI PER FARMACI VETERINARI", "LATTE CRUDO ALLA STALLA",
+"COSTI PER OLI E LUBRIFICANTI", "FORMAGGIO DA LATTE CAPRINO") e non solo
+quella di un singolo documento di esempio.
 """
 
 import re
@@ -51,38 +54,78 @@ def _normalizza(testo) -> str:
 
 
 # ---------------------------------------------------------------------------
+# VOCI DA SCARTARE: righe di riepilogo/risultato che l'AI a volte estrae per
+# errore nonostante le istruzioni (es. "UTILE D'ESERCIZIO", "TOTALE RICAVI",
+# "REDDITO IMPONIBILE"), o voci di investimento/capex (es. "BENI
+# STRUMENTALI") che non sono costi/ricavi operativi e non vanno sommate nel
+# conto economico riclassificato. Se una voce corrisponde a uno di questi
+# pattern, viene ignorata del tutto (non finisce ne' in una categoria
+# specifica ne' nel generico "Altro"/"Oneri diversi").
+# ---------------------------------------------------------------------------
+PATTERN_DA_SCARTARE = re.compile(
+    r"^(totale|subtotale|progressivo|a pareggio|utile d.?esercizio|"
+    r"perdita d.?esercizio|reddito imponibile|beni strumentali|"
+    r"totale attivita|totale passivita|totale generale|totale costi|"
+    r"totale ricavi|risultato (d.?esercizio|ante imposte|operativo))\b"
+)
+
+
+# ---------------------------------------------------------------------------
 # REGOLE DI CLASSIFICAZIONE USCITE (ordine = priorita': la prima regola che
 # trova corrispondenza vince; le regole piu' specifiche vanno per prime,
 # quelle generiche/di ripiego per ultime).
 # ---------------------------------------------------------------------------
 REGOLE_USCITE: List[Tuple[str, str]] = [
-    (r"carburant|gasoli|benzin|\bdiesel\b", "Carburanti"),
-    (r"mangim|forag|\bfien\b|insilat|zootecni.*aliment", "Mangimi e Foraggi"),
-    (r"sement|semin|floro.?viv|vivais", "Sementi"),
+    (r"carburant|gasoli|benzin|\bdiesel\b|lubrificant|combustibil",
+     "Carburanti"),
+    (r"mangim|forag|\bfien\b|insilat|zootecni.*aliment|integrator|"
+     r"\bmais\b|crusca|farina.*zootecnic|\bpaglia\b|erba medica|trinciat",
+     "Mangimi e Foraggi"),
+    (r"sement|semin|floro.?viv|vivais|barbatell",
+     "Sementi"),
     (r"energia elettric|\benel\b|\beni\b|\ba2a\b|\bedison\b|sorgenia|"
-     r"bolletta elettric|gas riscald|riscaldamento", "Energia elettrica"),
-    (r"manut|riparaz|ricambi|officina", "Manutenzioni"),
-    (r"lavoraz.*terzi|conto\s*terzi|contoterzis.*(passiv|terzi)|mietitrebb", "Lavorazioni c/terzi"),
+     r"bolletta elettric|gas riscald|riscaldamento|acqua.*zootecnic|"
+     r"acqua uso", "Energia elettrica"),
+    (r"manut|riparaz|ricambi|officina|pneumatic|gomme e|ghiaia|pietre",
+     "Manutenzioni"),
+    (r"lavoraz.*terzi|conto\s*terzi|contoterzis.*(passiv|terzi)|mietitrebb",
+     "Lavorazioni c/terzi"),
     (r"\bleasing\b", "Leasing"),
     (r"affitt|canone.*(terreno|fabbricat|immobil)", "Affitti"),
     (r"assicura|polizza|grandine", "Assicurazioni"),
-    (r"consorzi.*bonifica|canone.*irrigu|acqua irrigu|taglia.*acqua", "Taglie acqua irrigua"),
+    (r"consorzi.*bonifica|canone.*irrigu|acqua irrigu|taglia.*acqua",
+     "Taglie acqua irrigua"),
     (r"salari|stipend|dipendent|personale", "Salari lordi dip."),
-    (r"prelievi titolare|compenso.*titolare|compenso.*soci", "Prelievi titolare"),
-    (r"contributi.*(inps|prev|scau|sindacal)", "Contributi prev."),
-    (r"consulenz|assistenz|professional|servizi|utenz|trasport|noleggio|comp\.?\s*prof",
+    (r"prelievi titolare|compenso.*titolare|compenso.*soci",
+     "Prelievi titolare"),
+    (r"contributi.*(inps|prev|scau|sindacal)|cassa previdenza",
+     "Contributi prev."),
+    (r"consulenz|assistenz|professional|servizi|utenz|trasport|"
+     r"noleggio|comp\.?\s*prof|telefon|contabilita|tenuta paghe|"
+     r"commercialist|pubblicit|fiere e mercati|spedizion|analisi.*labor|"
+     r"laboratori|smaltimento|formazione|certificazion|controllo.*cee|"
+     r"spese amministrative|disinfestazion|profilassi|pulizi",
      "Servizi"),
-    (r"sanif|indument|dispositiv.*protezion|altri acquist|non inerent|altri prod|\baltri\b",
+    (r"sanif|indument|dispositiv.*protezion|altri acquist|non inerent|"
+     r"altri prod|divise|vestiario|detersiv|detergent|cancelleria|"
+     r"imballagg|material.*consumo|scatole|borse|vasi e capsule|"
+     r"tappi e capsule|spese accessorie|\baltri\b",
      "Altri"),
-    (r"merci|materie prim|prodott|concim|fitofarmac|acquist|animali",
+    (r"merci|materie prim|prodott|concim|fitofarmac|acquist|animali|"
+     r"antiparassit|farmaci veterinari|\bveterinari\b|disinfettant|"
+     r"seme animale|fecondazione|trucioli",
      "Materie Prime e Merci"),
 ]
 
 REGOLE_ENTRATE: List[Tuple[str, str]] = [
-    (r"vendita|vendite|corrispettiv|cession|merci conto vendite|bottiglie conto vendite",
-     "Corrispettivi normali"),
-    (r"agrituris|contoterzis.*attiv|vendita energia|fotovoltaic|prestazio|noleggi|"
-     r"riaddebito|fitti attivi|deposito", "Attivita' connessa"),
+    (r"vendita|vendite|corrispettiv|cession|merci conto vendite|"
+     r"bottiglie conto vendite|\blatte\b|formaggio|\bcarne\b|salame|"
+     r"prosciutto|conserve|yogurt|olio di oliva|\bvino\b|vitell|"
+     r"\bbovin|\bsuin|ovini|caprini|ingrasso|confezione di formaggi|"
+     r"conferimento", "Corrispettivi normali"),
+    (r"agrituris|contoterzis.*attiv|vendita energia|fotovoltaic|prestazio|"
+     r"noleggi|riaddebito|fitti attivi|deposito|\bletame\b",
+     "Attivita' connessa"),
     (r"\bpac\b|\bpsr\b|contribut", "PAC e contributi pubblici"),
     (r"\biva\b|imposta|fiscal", "Gestione fiscale"),
 ]
@@ -111,7 +154,9 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
     usando la classificazione deterministica basata su parole chiave.
 
     Ogni categoria configurata (config.py) e' sempre presente nel risultato,
-    con 0.0 se non ha ricevuto alcuna voce.
+    con 0.0 se non ha ricevuto alcuna voce. Le righe di riepilogo/risultato
+    (es. "TOTALE RICAVI", "UTILE D'ESERCIZIO") vengono riconosciute e
+    scartate, per evitare di sommarle per errore nel conto riclassificato.
     """
     entrate: Dict[str, float] = {c: 0.0 for c in ENTRATE_CATEGORIE}
     uscite: Dict[str, float] = {c: 0.0 for c in USCITE_CATEGORIE}
@@ -126,6 +171,9 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
             importo = 0.0
 
         if not descrizione or importo == 0.0:
+            continue
+
+        if PATTERN_DA_SCARTARE.search(_normalizza(descrizione)):
             continue
 
         tipo_normalizzato = "entrata" if tipo.startswith("entrat") else "uscita"
