@@ -6,25 +6,9 @@ Modulo di integrazione con Groq (motore AI usato per la riclassificazione
 contabile). Groq offre un'API compatibile con lo standard OpenAI, gratuita
 e senza richiesta di carta di credito.
 
-APPROCCIO (importante):
-------------------------
-In una prima versione, si chiedeva al modello di leggere l'intero bilancio
-e contemporaneamente sommare/classificare le voci in 20+ macro-categorie in
-un solo colpo. Si e' rivelato inaffidabile: il modello tendeva ad accorpare
-le voci sotto poche categorie generiche, anche quando il documento le
-elencava chiaramente in modo distinto (es. "ENERGIA ELETTRICA",
-"MERCI C/ACQUISTI - CARBURANTI" come righe separate con proprio codice
-conto e proprio importo).
-
-Per questo motivo il modulo ora chiede all'AI SOLO di estrarre ogni singola
-voce del bilancio come testo (descrizione + importo + entrata/uscita) - un
-compito meccanico che i modelli linguistici svolgono in modo molto piu'
-affidabile. La classificazione nella categoria corretta viene poi svolta in
-modo deterministico da classificatore.py (parole chiave, puro codice
-Python), che non ha i problemi di variabilita'/accorpamento dell'AI.
-
-Questo modulo quindi:
-  1. Costruisce un prompt che chiede l'estrazione strutturata di ogni voce.
+Questo modulo:
+  1. Costruisce un prompt strutturato con la logica di riclassificazione
+     contabile agricola richiesta.
   2. Invia il testo estratto dai PDF a Groq chiedendo una risposta in
      formato JSON rigido.
   3. Valida e normalizza la risposta prima di restituirla al chiamante.
@@ -44,7 +28,12 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List
 
-from config import GROQ_CONFIG, GESTIONE_FISCALE_CATEGORIE
+from config import (
+    GROQ_CONFIG,
+    ENTRATE_CATEGORIE,
+    USCITE_CATEGORIE,
+    GESTIONE_FISCALE_CATEGORIE,
+)
 
 
 class GroqConfigError(Exception):
@@ -56,79 +45,109 @@ class GroqResponseError(Exception):
 
 
 @dataclass
+class VoceDettaglio:
+    descrizione: str
+    importo: float
+
+
+@dataclass
 class RiclassificazioneResult:
-    entrate: Dict[str, float]
-    uscite: Dict[str, float]
-    gestione_fiscale: Dict[str, float]
+    entrate: Dict[str, List[VoceDettaglio]]
+    uscite: Dict[str, List[VoceDettaglio]]
+    gestione_fiscale: Dict[str, List[VoceDettaglio]]
     note: List[str]
 
+    def totale_entrate(self) -> Dict[str, float]:
+        return {k: sum(v.importo for v in voci) for k, voci in self.entrate.items()}
+
+    def totale_uscite(self) -> Dict[str, float]:
+        return {k: sum(v.importo for v in voci) for k, voci in self.uscite.items()}
+
+    def totale_gestione_fiscale(self) -> Dict[str, float]:
+        return {k: sum(v.importo for v in voci) for k, voci in self.gestione_fiscale.items()}
+
 
 # ---------------------------------------------------------------------------
-# COSTRUZIONE DEL PROMPT (SOLO ESTRAZIONE, NESSUNA CLASSIFICAZIONE)
+# COSTRUZIONE DEL PROMPT
 # ---------------------------------------------------------------------------
 def _build_system_prompt() -> str:
+    entrate = "\n".join(f"  - {c}" for c in ENTRATE_CATEGORIE)
+    uscite = "\n".join(f"  - {c}" for c in USCITE_CATEGORIE)
     fiscale = "\n".join(f"  - {c}" for c in GESTIONE_FISCALE_CATEGORIE)
 
     return f"""Sei un assistente esperto di contabilita' agraria e bilanci d'esercizio.
 Il tuo compito e' leggere una situazione contabile (bilancio di verifica,
-mastrini, estratto conto economico) fornita come testo estratto da PDF ed
-ESTRARRE OGNI SINGOLA VOCE elencata, senza classificarla ne' raggrupparla.
+mastrini, estratto conto economico) fornita come testo estratto da PDF e
+riclassificare ogni voce nelle seguenti macro-categorie.
 
-Non devi decidere in quale macro-categoria contabile mettere le voci: quel
-lavoro lo fa un altro sistema. Il tuo unico compito e' un'estrazione fedele
-e completa, riga per riga.
+ENTRATE:
+{entrate}
 
-REGOLE DI ESTRAZIONE:
-1. Analizza OGNI riga del bilancio di verifica/mastrino, sia nella sezione
-   RICAVI/ENTRATE sia nella sezione COSTI/USCITE. I documenti hanno spesso
-   un codice conto (es. "66/25/010") seguito da una descrizione abbreviata
-   in maiuscolo (es. "MERCI C/ACQUISTI - CARBURANTI") e uno o piu' importi.
-2. NON sommare insieme voci diverse e NON scartare righe perche' ti
-   sembrano simili ad altre gia' estratte: ogni riga con un proprio codice
-   conto o una propria descrizione e' una voce a se stante, anche se il
-   suo importo e' piccolo.
-3. NON limitarti alle righe di "TOTALE"/"PROGRESSIVO": quelle sono
-   riepiloghi e vanno IGNORATE (non estratte come voci), altrimenti gli
-   importi verrebbero conteggiati due volte.
-4. ATTENZIONE ALLA GERARCHIA DEI CODICI CONTO: molti bilanci di verifica
-   hanno una struttura a piu' livelli, dove un codice piu' corto e' il
-   SUBTOTALE dei codici piu' lunghi che iniziano allo stesso modo. Esempio
-   reale:
-     3.66      COSTI P/MAT. PRI. SUSS. CON. E MER.      342.546,13
-     3.66.05   MATERIE PRIME                             91.681,29
-     3.66.05.001  MATERIE PRIME CONTO ACQUISTO UVA        51.000,00
-     3.66.05.002  MATERIE PRIME PER LAVORAZIONE VINO      40.681,29
-   In questo esempio "3.66" e "3.66.05" sono SUBTOTALI (la somma delle
-   righe piu' specifiche sotto di loro): NON vanno estratti come voci,
-   altrimenti gli stessi importi verrebbero conteggiati piu' volte. Estrai
-   SEMPRE E SOLO le righe con il codice PIU' LUNGO/SPECIFICO che non ha a
-   sua volta ulteriori sotto-righe (nell'esempio: solo le due righe
-   "3.66.05.001" e "3.66.05.002", MAI "3.66" ne' "3.66.05"). Applica questa
-   stessa logica a ogni gruppo gerarchico del documento, sia in ENTRATE che
-   in USCITE. Se un codice non ha alcuna sotto-riga piu' specifica sotto di
-   se' (e' gia' un dato di dettaglio), estrai quello.
-5. Per ogni voce riporta il testo della descrizione ESATTAMENTE come
-   appare nel documento (mantieni abbreviazioni, maiuscole, codici conto se
-   utile per il contesto), l'importo come numero (positivo, senza simboli
-   di valuta ne' separatori delle migliaia) e "tipo": "entrata" se la voce
-   e' un ricavo/provento, "uscita" se e' un costo/onere.
-6. Estrai i dati di gestione fiscale (IVA vendite VE26, IVA acquisti VF27,
-   imposta dovuta VL3, netto gestione) SOLO se esplicitamente presenti nel
-   documento, nelle categorie:
+USCITE:
+{uscite}
+
+GESTIONE FISCALE (dati IVA/imposte, se presenti nel documento):
 {fiscale}
-   Se non presenti, restituisci 0.0 per quella categoria.
+
+REGOLE:
+1. Analizza tutte le voci di ricavo e costo presenti nel testo.
+2. Assegna ciascuna voce alla macro-categoria piu' appropriata secondo la
+   logica del settore agricolo. Mantieni la descrizione originale della voce
+   (la "microvoce") e il suo importo. Usa le categorie PIU' SPECIFICHE:
+   - vendita latte/carne/cereali -> "Corrispettivi normali"
+   - agriturismo/contoterzismo attivo/vendita energia -> "Attivita' connessa"
+   - PSR/PAC/contributi regionali -> "PAC e contributi pubblici"
+   - mangimi, foraggi, alimenti per il bestiame -> "Mangimi e Foraggi"
+   - gasolio agricolo, benzina, carburanti per mezzi -> "Carburanti"
+   - sementi, piantine, materiale di semina -> "Sementi"
+   - concimi, fitofarmaci, materie prime generiche non altrimenti
+     classificabili -> "Materie Prime e Merci"
+   - altri acquisti minori non riconducibili alle voci sopra -> "Altri"
+   - bollette elettriche, energia elettrica -> "Energia elettrica"
+   - manutenzione macchinari, impianti, fabbricati -> "Manutenzioni"
+   - lavorazioni conto terzi (contoterzismo passivo, es. mietitrebbiatura
+     conto terzi) -> "Lavorazioni c/terzi"
+   - consulenze, servizi professionali, altri servizi generici non
+     riconducibili alle voci sopra -> "Servizi"
+   - canoni leasing macchinari -> "Leasing"
+   - affitto terreni/fabbricati -> "Affitti"
+   - costo dipendenti -> "Salari lordi dip."
+   - compensi titolare/soci -> "Prelievi titolare"
+   - contributi INPS/Ex-Scau -> "Contributi prev."
+   - polizze grandine/RC/assicurazioni -> "Assicurazioni"
+   - consorzi di bonifica, canoni irrigui -> "Taglie acqua irrigua"
+   - tutto il resto non classificabile -> "Altro" (entrate) o "Oneri
+     diversi di gestione" (uscite)
+3. Se una voce e' ambigua o non chiaramente riconducibile a una categoria,
+   inseriscila in "Altro" (per le entrate) o "Oneri diversi di gestione"
+   (per le uscite), e segnalalo in "note".
+4. Se non trovi dati per una categoria, omettila dal JSON, non c'è bisogno di inserire array vuoti.
+5. Tutti gli importi devono essere numeri (float), positivi, espressi in
+   euro, senza simboli di valuta ne' separatori delle migliaia.
+6. Estrai i dati di gestione fiscale SOLO se esplicitamente presenti nel
+   documento.
 
 FORMATO DI OUTPUT (OBBLIGATORIO):
 Rispondi ESCLUSIVAMENTE con un oggetto JSON valido, senza testo aggiuntivo,
 commenti, markdown o backtick, con questa struttura esatta:
 
 {{
-  "voci": [
-    {{"descrizione": "<testo esatto della voce>", "importo": <numero>, "tipo": "entrata"}},
-    {{"descrizione": "<testo esatto della voce>", "importo": <numero>, "tipo": "uscita"}}
-  ],
-  "gestione_fiscale": {{ "<categoria>": <valore_numerico>, ... }},
-  "note": ["<eventuali osservazioni su righe ambigue, illeggibili o incerte>"]
+  "entrate": {{
+    "<categoria>": [
+      {{"descrizione": "<nome originale voce>", "importo": <valore_numerico>}}
+    ]
+  }},
+  "uscite": {{
+    "<categoria>": [
+      {{"descrizione": "<nome originale voce>", "importo": <valore_numerico>}}
+    ]
+  }},
+  "gestione_fiscale": {{
+    "<categoria>": [
+      {{"descrizione": "<nome originale voce>", "importo": <valore_numerico>}}
+    ]
+  }},
+  "note": ["<eventuali osservazioni sulle voci ambigue o mancanti>"]
 }}
 """
 
@@ -141,9 +160,8 @@ Testo estratto dai documenti contabili (uno o piu' PDF concatenati):
 
 {testo_concatenato}
 
-Estrai TUTTE le singole voci presenti nel testo sopra, secondo le
-istruzioni di sistema. Non classificarle in categorie: limitati a
-estrarre descrizione, importo e tipo (entrata/uscita) di ciascuna voce."""
+Analizza il contenuto sopra e restituisci il JSON di riclassificazione
+richiesto secondo le istruzioni di sistema."""
 
 
 # ---------------------------------------------------------------------------
@@ -200,9 +218,7 @@ def _strip_markdown_fences(raw: str) -> str:
     return raw.strip()
 
 
-def _parse_voci_response(raw: str) -> Dict:
-    """Valida la risposta grezza dell'AI (estrazione voci) e restituisce
-    un dict con 'voci' (list), 'gestione_fiscale' (dict) e 'note' (list)."""
+def _parse_response(raw: str) -> RiclassificazioneResult:
     cleaned = _strip_markdown_fences(raw)
 
     try:
@@ -213,45 +229,38 @@ def _parse_voci_response(raw: str) -> Dict:
             "Riprova; se il problema persiste, verifica il prompt o il modello configurato."
         ) from exc
 
-    if "voci" not in data:
+    required_keys = {"entrate", "uscite", "gestione_fiscale"}
+    if not required_keys.issubset(data.keys()):
+        mancanti = required_keys - data.keys()
         raise GroqResponseError(
-            "La risposta di Groq non contiene la sezione attesa: 'voci'."
+            f"La risposta di Groq non contiene le sezioni attese: {', '.join(mancanti)}."
         )
 
-    voci_raw = data.get("voci", [])
-    if not isinstance(voci_raw, list):
-        raise GroqResponseError("Formato risposta non valido: 'voci' deve essere una lista.")
+    def _to_dettaglio_dict(d) -> Dict[str, List[VoceDettaglio]]:
+        result = {}
+        if not isinstance(d, dict):
+            raise GroqResponseError("Formato risposta non valido: attesa una mappa categoria->lista dettagli.")
+        for k, items in d.items():
+            result[k] = []
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                desc = str(item.get("descrizione", "Voce non specificata"))
+                try:
+                    imp = float(item.get("importo", 0.0))
+                except (TypeError, ValueError):
+                    imp = 0.0
+                result[k].append(VoceDettaglio(descrizione=desc, importo=imp))
+        return result
 
-    voci: List[Dict] = []
-    for v in voci_raw:
-        if not isinstance(v, dict):
-            continue
-        try:
-            importo = float(v.get("importo", 0.0))
-        except (TypeError, ValueError):
-            importo = 0.0
-        voci.append({
-            "descrizione": str(v.get("descrizione", "")).strip(),
-            "importo": importo,
-            "tipo": str(v.get("tipo", "")).strip().lower(),
-        })
-
-    gestione_fiscale_raw = data.get("gestione_fiscale", {})
-    gestione_fiscale: Dict[str, float] = {}
-    if isinstance(gestione_fiscale_raw, dict):
-        for k, val in gestione_fiscale_raw.items():
-            try:
-                gestione_fiscale[k] = float(val)
-            except (TypeError, ValueError):
-                gestione_fiscale[k] = 0.0
-    for categoria in GESTIONE_FISCALE_CATEGORIE:
-        gestione_fiscale.setdefault(categoria, 0.0)
-
-    return {
-        "voci": voci,
-        "gestione_fiscale": gestione_fiscale,
-        "note": list(data.get("note", []) or []),
-    }
+    return RiclassificazioneResult(
+        entrate=_to_dettaglio_dict(data.get("entrate", {})),
+        uscite=_to_dettaglio_dict(data.get("uscite", {})),
+        gestione_fiscale=_to_dettaglio_dict(data.get("gestione_fiscale", {})),
+        note=list(data.get("note", []) or []),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,25 +269,14 @@ def _parse_voci_response(raw: str) -> Dict:
 def riclassifica_bilancio(anno: str, testi_pdf: List[str]) -> RiclassificazioneResult:
     """
     Punto di ingresso principale del modulo: prende il testo estratto dai
-    PDF caricati, chiede a Groq di ESTRARRE (non classificare) ogni voce, e
-    poi usa il classificatore deterministico (classificatore.py) per
-    assegnare ciascuna voce alla categoria corretta e sommare gli importi.
+    PDF caricati e restituisce l'oggetto RiclassificazioneResult con i
+    valori standardizzati pronti per essere scritti nel file Excel.
 
     Solleva GroqConfigError se la chiave API non e' impostata, e
     GroqResponseError se la risposta non rispetta il formato atteso.
     """
-    # Import locale per evitare un ciclo di import (classificatore.py
-    # importa RiclassificazioneResult da questo stesso modulo).
-    from classificatore import classifica_voci
-
     system_prompt = _build_system_prompt()
     user_prompt = _build_user_prompt(anno, testi_pdf)
 
     raw_response = _call_model(system_prompt, user_prompt)
-    dati = _parse_voci_response(raw_response)
-
-    risultato = classifica_voci(dati["voci"])
-    risultato.gestione_fiscale = dati["gestione_fiscale"]
-    risultato.note = list(risultato.note) + list(dati["note"])
-
-    return risultato
+    return _parse_response(raw_response)

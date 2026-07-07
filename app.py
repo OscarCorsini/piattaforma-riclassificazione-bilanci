@@ -430,6 +430,24 @@ if avvia:
                 continue
 
             risultati_per_anno[anno] = risultato
+            
+            with st.expander(f"Dettaglio Voci estratte - anno {anno}"):
+                dettagli = []
+                for macro, voci in risultato.entrate.items():
+                    for v in voci:
+                        dettagli.append({"Sezione": "Entrate", "Categoria": macro, "Voce Originale": v.descrizione, "Importo (€)": v.importo})
+                for macro, voci in risultato.uscite.items():
+                    for v in voci:
+                        dettagli.append({"Sezione": "Uscite", "Categoria": macro, "Voce Originale": v.descrizione, "Importo (€)": v.importo})
+                for macro, voci in risultato.gestione_fiscale.items():
+                    for v in voci:
+                        dettagli.append({"Sezione": "Gestione Fiscale", "Categoria": macro, "Voce Originale": v.descrizione, "Importo (€)": v.importo})
+                
+                if dettagli:
+                    st.dataframe(dettagli, use_container_width=True)
+                else:
+                    st.info("Nessun dettaglio estratto.")
+
             if risultato.note:
                 with st.expander(f"Osservazioni - anno {anno}"):
                     for nota in risultato.note:

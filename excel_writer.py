@@ -24,6 +24,8 @@ Supporta inoltre la scrittura di PIU' ANNI in un'unica esecuzione
 tutti gli anni richiesti prima di salvare.
 """
 
+from __future__ import annotations
+
 import io
 import re
 import unicodedata
@@ -195,9 +197,9 @@ def _scrivi_valori_anno(sheet, colonna: str, risultato: RiclassificazioneResult)
     gia' aperto. Funzione interna riusata sia dal percorso a singolo anno
     che da quello multi-anno."""
     valori_da_scrivere = {
-        **risultato.entrate,
-        **risultato.uscite,
-        **risultato.gestione_fiscale,
+        **risultato.totale_entrate(),
+        **risultato.totale_uscite(),
+        **risultato.totale_gestione_fiscale(),
     }
 
     celle_scritte = 0
@@ -244,6 +246,49 @@ def carica_template_predefinito() -> bytes:
         raise ExcelTemplateError(
             f"Impossibile leggere il template predefinito ({TEMPLATE_PATH}): {exc}"
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# NUOVO FOGLIO: DETTAGLIO MICROVOCI
+# ---------------------------------------------------------------------------
+def _scrivi_dettaglio_voci(workbook, risultati_per_anno: Dict[str, RiclassificazioneResult]):
+    """Crea un nuovo foglio per riversare l'elenco di tutte le microvoci divise per anno."""
+    sheet_name = "Dettaglio Microvoci"
+    if sheet_name in workbook.sheetnames:
+        sheet = workbook[sheet_name]
+        sheet.delete_rows(1, sheet.max_row)
+    else:
+        sheet = workbook.create_sheet(title=sheet_name)
+    
+    headers = ["Anno", "Sezione", "Macro Categoria", "Voce Originale", "Importo"]
+    sheet.append(headers)
+    
+    from openpyxl.styles import Font
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+        
+    for anno, risultato in risultati_per_anno.items():
+        for macro, voci in risultato.entrate.items():
+            for voce in voci:
+                sheet.append([anno, "Entrate", macro, voce.descrizione, voce.importo])
+        for macro, voci in risultato.uscite.items():
+            for voce in voci:
+                sheet.append([anno, "Uscite", macro, voce.descrizione, voce.importo])
+        for macro, voci in risultato.gestione_fiscale.items():
+            for voce in voci:
+                sheet.append([anno, "Gestione Fiscale", macro, voce.descrizione, voce.importo])
+                
+    for col in sheet.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        sheet.column_dimensions[column].width = adjusted_width
 
 
 # ---------------------------------------------------------------------------
@@ -307,16 +352,7 @@ def popola_template_multi(
             continue
         report_per_anno[anno] = _scrivi_valori_anno(sheet, colonna, risultato)
 
-    # Forza Excel a ricalcolare TUTTE le formule all'apertura del file:
-    # openpyxl non calcola le formule mentre scrive, quindi le celle di
-    # subtotale/totale (es. "Acquisti ordinari", "Totale uscite", "M.O.L.")
-    # manterrebbero il valore memorizzato nel template originale finche'
-    # non viene forzato un ricalcolo completo, risultando vuote o non
-    # aggiornate quando l'utente apre il file scaricato.
-    try:
-        workbook.calculation.fullCalcOnLoad = True
-    except Exception:
-        pass
+    _scrivi_dettaglio_voci(workbook, risultati_per_anno)
 
     buffer = io.BytesIO()
     workbook.save(buffer)
@@ -327,4 +363,14 @@ def popola_template_multi(
 
 # ---------------------------------------------------------------------------
 # FUNZIONE PUBBLICA: SCRITTURA A SINGOLO ANNO (compatibilita')
-# ------------------------------------------------
+# ---------------------------------------------------------------------------
+def popola_template_excel(template_file, anno: str, risultato: RiclassificazioneResult):
+    """Variante a singolo anno, mantenuta per compatibilita': internamente
+    usa lo stesso motore multi-anno con un solo elemento."""
+    dati = _leggi_bytes(template_file)
+    buffer, report_per_anno, errori_per_anno = popola_template_multi(dati, {anno: risultato})
+
+    if anno in errori_per_anno:
+        raise ExcelMappingError(errori_per_anno[anno])
+
+    return buffer, report_per_anno[anno]
