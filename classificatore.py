@@ -71,6 +71,70 @@ PATTERN_DA_SCARTARE = re.compile(
 
 
 # ---------------------------------------------------------------------------
+# DEDUPLICAZIONE GERARCHICA DEI CODICI CONTO (deterministica)
+# ---------------------------------------------------------------------------
+# Molti bilanci di verifica hanno una struttura a piu' livelli dove un
+# codice piu' corto e' il SUBTOTALE dei codici piu' lunghi che iniziano
+# allo stesso modo (es. "3.66" e' il subtotale di "3.66.05.001" e
+# "3.66.05.002"). In precedenza si chiedeva all'AI di riconoscere DA SOLA
+# questi subtotali e scartarli durante l'estrazione: si e' rivelato
+# inaffidabile (il modello a volte estraeva comunque la riga aggregata
+# invece del dettaglio, con l'effetto pratico che gli importi finivano
+# nelle categorie generiche invece che in quelle specifiche).
+#
+# Ora l'AI estrae DELIBERATAMENTE tutte le righe, comprese quelle
+# aggregate, insieme al loro codice conto. Questa funzione elimina poi in
+# modo puramente matematico (confronto di prefissi tra codici) le righe
+# che risultano essere il subtotale di altre righe piu' specifiche
+# presenti nella stessa estrazione, tenendo solo le righe "foglia"
+# (quelle senza ulteriori sotto-codici tra le voci estratte).
+def _tokenizza_codice(codice: str) -> tuple:
+    """Scompone un codice conto (es. '3.66.05.001' o '66/25/010') nei suoi
+    segmenti, per poter confrontare prefissi indipendentemente dal
+    separatore usato nel documento (punto, slash, trattino)."""
+    parti = re.split(r"[.\-/\s]+", str(codice).strip())
+    return tuple(p for p in parti if p)
+
+
+def filtra_subtotali_gerarchia(voci: List[Dict]) -> List[Dict]:
+    """
+    Rimuove dalla lista di voci quelle il cui codice_conto e' un prefisso
+    del codice_conto di un'ALTRA voce nella stessa lista (cioe' sono il
+    subtotale di quell'altra voce, piu' specifica). Le voci senza
+    codice_conto (o con un codice che non compare come prefisso di
+    nessun'altra) vengono mantenute cosi' come sono, perche' per loro non
+    e' possibile determinare la gerarchia in modo affidabile.
+    """
+    codici_tokenizzati = []
+    for v in voci:
+        codice = str(v.get("codice_conto", "") or "").strip()
+        if codice:
+            codici_tokenizzati.append(_tokenizza_codice(codice))
+
+    def ha_figli(token: tuple) -> bool:
+        for altro in codici_tokenizzati:
+            if altro != token and len(altro) > len(token) and altro[: len(token)] == token:
+                return True
+        return False
+
+    risultato = []
+    for v in voci:
+        codice = str(v.get("codice_conto", "") or "").strip()
+        if not codice:
+            risultato.append(v)
+            continue
+        token = _tokenizza_codice(codice)
+        if ha_figli(token):
+            # E' un subtotale di righe piu' specifiche presenti
+            # nell'estrazione: viene scartato per evitare il doppio
+            # conteggio dello stesso importo.
+            continue
+        risultato.append(v)
+
+    return risultato
+
+
+# ---------------------------------------------------------------------------
 # REGOLE DI CLASSIFICAZIONE USCITE (ordine = priorita': la prima regola che
 # trova corrispondenza vince; le regole piu' specifiche vanno per prime,
 # quelle generiche/di ripiego per ultime).
