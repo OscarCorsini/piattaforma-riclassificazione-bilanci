@@ -56,7 +56,7 @@ richiesta, piano gratuito permanente.
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 from config import GROQ_CONFIG, GESTIONE_FISCALE_CATEGORIE
@@ -76,6 +76,13 @@ class RiclassificazioneResult:
     uscite: Dict[str, float]
     gestione_fiscale: Dict[str, float]
     note: List[str]
+    # Dettaglio delle singole voci originali assegnate a ciascuna categoria
+    # (categoria -> lista di {"descrizione", "importo"}): non usato per il
+    # calcolo (gia' fatto in entrate/uscite), serve solo per mostrare
+    # all'utente una verifica leggibile di come sono state classificate le
+    # voci del bilancio caricato.
+    dettaglio_entrate: Dict[str, List[Dict]] = field(default_factory=dict)
+    dettaglio_uscite: Dict[str, List[Dict]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

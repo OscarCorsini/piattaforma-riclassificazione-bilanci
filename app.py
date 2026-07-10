@@ -430,19 +430,34 @@ if avvia:
                 continue
 
             risultati_per_anno[anno] = risultato
-            
+
             with st.expander(f"Dettaglio Voci estratte - anno {anno}"):
                 dettagli = []
-                for macro, voci in risultato.entrate.items():
+                for macro, voci in risultato.dettaglio_entrate.items():
                     for v in voci:
-                        dettagli.append({"Sezione": "Entrate", "Categoria": macro, "Voce Originale": v.descrizione, "Importo (€)": v.importo})
-                for macro, voci in risultato.uscite.items():
+                        dettagli.append({
+                            "Sezione": "Entrate",
+                            "Categoria": macro,
+                            "Voce Originale": v["descrizione"],
+                            "Importo (EUR)": v["importo"],
+                        })
+                for macro, voci in risultato.dettaglio_uscite.items():
                     for v in voci:
-                        dettagli.append({"Sezione": "Uscite", "Categoria": macro, "Voce Originale": v.descrizione, "Importo (€)": v.importo})
-                for macro, voci in risultato.gestione_fiscale.items():
-                    for v in voci:
-                        dettagli.append({"Sezione": "Gestione Fiscale", "Categoria": macro, "Voce Originale": v.descrizione, "Importo (€)": v.importo})
-                
+                        dettagli.append({
+                            "Sezione": "Uscite",
+                            "Categoria": macro,
+                            "Voce Originale": v["descrizione"],
+                            "Importo (EUR)": v["importo"],
+                        })
+                for macro, valore in risultato.gestione_fiscale.items():
+                    if valore:
+                        dettagli.append({
+                            "Sezione": "Gestione Fiscale",
+                            "Categoria": macro,
+                            "Voce Originale": "(valore aggregato dal bilancio)",
+                            "Importo (EUR)": valore,
+                        })
+
                 if dettagli:
                     st.dataframe(dettagli, use_container_width=True)
                 else:

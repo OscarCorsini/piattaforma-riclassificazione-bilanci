@@ -224,6 +224,14 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
     """
     entrate: Dict[str, float] = {c: 0.0 for c in ENTRATE_CATEGORIE}
     uscite: Dict[str, float] = {c: 0.0 for c in USCITE_CATEGORIE}
+    # Traccia anche, per ciascuna categoria, l'elenco delle singole voci
+    # originali che vi sono state assegnate (descrizione + importo): non
+    # serve per il calcolo del totale (gia' fatto sopra), ma permette
+    # all'interfaccia di mostrare un dettaglio verificabile di "quale voce
+    # e' finita in quale categoria", utile per controllare rapidamente che
+    # la classificazione sia corretta su un bilancio reale.
+    dettaglio_entrate: Dict[str, List[Dict]] = {c: [] for c in ENTRATE_CATEGORIE}
+    dettaglio_uscite: Dict[str, List[Dict]] = {c: [] for c in USCITE_CATEGORIE}
     note: List[str] = []
 
     for voce in voci:
@@ -245,8 +253,14 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
 
         if tipo_normalizzato == "entrata":
             entrate[categoria] = entrate.get(categoria, 0.0) + importo
+            dettaglio_entrate.setdefault(categoria, []).append(
+                {"descrizione": descrizione, "importo": importo}
+            )
         else:
             uscite[categoria] = uscite.get(categoria, 0.0) + importo
+            dettaglio_uscite.setdefault(categoria, []).append(
+                {"descrizione": descrizione, "importo": importo}
+            )
 
         catchall = "Altro" if tipo_normalizzato == "entrata" else "Oneri diversi di gestione"
         if categoria == catchall:
@@ -260,4 +274,6 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
         uscite=uscite,
         gestione_fiscale={},
         note=note,
+        dettaglio_entrate=dettaglio_entrate,
+        dettaglio_uscite=dettaglio_uscite,
     )
