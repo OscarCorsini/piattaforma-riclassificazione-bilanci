@@ -232,41 +232,46 @@ def _call_model(system_prompt: str, user_prompt: str) -> str:
     #   - timeout di connessione separato e piu' breve del timeout totale,
     #     cosi' un problema di rete si manifesta rapidamente invece di
     #     attendere l'intero timeout_seconds prima di fallire.
-    http_client = httpx.Client(
+    # Il client httpx viene aperto con un "with" e quindi chiuso subito
+    # dopo la chiamata: prima veniva creato un httpx.Client nuovo ad ogni
+    # chiamata SENZA mai chiuderlo esplicitamente, il che lascia socket e
+    # connessioni aperte che si accumulano nel corso di una sessione. Su
+    # un'istanza con risorse limitate (es. piano gratuito Render, 512MB di
+    # RAM) questo tipo di accumulo puo' contribuire a crash del processo.
+    with httpx.Client(
         trust_env=False,
         timeout=httpx.Timeout(GROQ_CONFIG.timeout_seconds, connect=20.0),
-    )
-
-    client = OpenAI(
-        api_key=GROQ_CONFIG.api_key,
-        base_url=GROQ_CONFIG.base_url,
-        http_client=http_client,
-        max_retries=2,
-    )
-
-    try:
-        response = client.chat.completions.create(
-            model=GROQ_CONFIG.model_name,
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            timeout=GROQ_CONFIG.timeout_seconds,
+    ) as http_client:
+        client = OpenAI(
+            api_key=GROQ_CONFIG.api_key,
+            base_url=GROQ_CONFIG.base_url,
+            http_client=http_client,
+            max_retries=2,
         )
-    except APIConnectionError as exc:
-        # Espone la causa reale (es. errore DNS, TLS, timeout TCP) invece
-        # del generico "Connection error" che Streamlit mostrerebbe altrimenti.
-        causa = repr(exc.__cause__) if exc.__cause__ else str(exc)
-        raise GroqResponseError(
-            "Impossibile raggiungere il server di Groq (api.groq.com) dalla "
-            f"rete di hosting attuale. Dettaglio tecnico: {causa}. "
-            "Verifica che l'host consenta connessioni HTTPS in uscita verso "
-            "api.groq.com sulla porta 443."
-        ) from exc
 
-    return response.choices[0].message.content or ""
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_CONFIG.model_name,
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                timeout=GROQ_CONFIG.timeout_seconds,
+            )
+        except APIConnectionError as exc:
+            # Espone la causa reale (es. errore DNS, TLS, timeout TCP) invece
+            # del generico "Connection error" che Streamlit mostrerebbe altrimenti.
+            causa = repr(exc.__cause__) if exc.__cause__ else str(exc)
+            raise GroqResponseError(
+                "Impossibile raggiungere il server di Groq (api.groq.com) dalla "
+                f"rete di hosting attuale. Dettaglio tecnico: {causa}. "
+                "Verifica che l'host consenta connessioni HTTPS in uscita verso "
+                "api.groq.com sulla porta 443."
+            ) from exc
+
+        return response.choices[0].message.content or ""
 
 
 # ---------------------------------------------------------------------------
