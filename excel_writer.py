@@ -259,14 +259,14 @@ def _scrivi_dettaglio_voci(workbook, risultati_per_anno: Dict[str, Riclassificaz
         sheet.delete_rows(1, sheet.max_row)
     else:
         sheet = workbook.create_sheet(title=sheet_name)
-    
+
     headers = ["Anno", "Sezione", "Macro Categoria", "Voce Originale", "Importo"]
     sheet.append(headers)
-    
+
     from openpyxl.styles import Font
     for cell in sheet[1]:
         cell.font = Font(bold=True)
-        
+
     for anno, risultato in risultati_per_anno.items():
         for macro, voci in risultato.entrate.items():
             for voce in voci:
@@ -277,7 +277,7 @@ def _scrivi_dettaglio_voci(workbook, risultati_per_anno: Dict[str, Riclassificaz
         for macro, voci in risultato.gestione_fiscale.items():
             for voce in voci:
                 sheet.append([anno, "Gestione Fiscale", macro, voce.descrizione, voce.importo])
-                
+
     for col in sheet.columns:
         max_length = 0
         column = col[0].column_letter
@@ -285,7 +285,7 @@ def _scrivi_dettaglio_voci(workbook, risultati_per_anno: Dict[str, Riclassificaz
             try:
                 if len(str(cell.value)) > max_length:
                     max_length = len(str(cell.value))
-            except:
+            except Exception:
                 pass
         adjusted_width = (max_length + 2)
         sheet.column_dimensions[column].width = adjusted_width
@@ -313,7 +313,9 @@ def popola_template_multi(
 ) -> Tuple[io.BytesIO, Dict[str, WriteReport], Dict[str, str]]:
     """
     Apre il template UNA SOLA VOLTA e scrive i dati di piu' anni nello
-    stesso file, restituendo un unico buffer scaricabile.
+    stesso file, restituendo un unico buffer scaricabile. Aggiunge anche un
+    foglio "Dettaglio Microvoci" con ogni singola voce originale, utile per
+    verificare la classificazione.
 
     Restituisce (buffer, report_per_anno, errori_per_anno): gli anni scritti
     con successo compaiono in report_per_anno, quelli per cui non e' stata
@@ -331,6 +333,17 @@ def popola_template_multi(
         raise ExcelTemplateError(
             f"Impossibile aprire il file Excel template: {exc}"
         ) from exc
+
+    # Forza Excel a ricalcolare TUTTE le formule all'apertura del file:
+    # openpyxl non calcola le formule mentre scrive, quindi le celle di
+    # subtotale/totale (es. "Acquisti ordinari", "Totale uscite", "M.O.L.")
+    # manterrebbero il valore memorizzato nel template originale finche'
+    # non viene forzato un ricalcolo completo, risultando vuote o non
+    # aggiornate quando l'utente apre il file scaricato.
+    try:
+        workbook.calculation.fullCalcOnLoad = True
+    except Exception:
+        pass
 
     sheet = _get_sheet(workbook, SHEET_NAME_RICLASSIFICAZIONE)
     sheet_valori = _get_sheet(workbook_valori, SHEET_NAME_RICLASSIFICAZIONE)

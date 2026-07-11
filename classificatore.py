@@ -33,13 +33,18 @@ cartella condivisa dall'utente, per intercettare la terminologia realmente
 usata (es. "COSTI PER FARMACI VETERINARI", "LATTE CRUDO ALLA STALLA",
 "COSTI PER OLI E LUBRIFICANTI", "FORMAGGIO DA LATTE CAPRINO") e non solo
 quella di un singolo documento di esempio.
+
+Il risultato (RiclassificazioneResult, definito in groq_client.py) tiene
+per ciascuna categoria la LISTA delle voci originali assegnate (oggetti
+Voce), non solo il totale: questo alimenta sia le celle di totale del
+template Excel sia il foglio di dettaglio con ogni singola voce.
 """
 
 import re
 import unicodedata
 from typing import Dict, List, Tuple
 
-from groq_client import RiclassificazioneResult
+from groq_client import RiclassificazioneResult, Voce
 from config import ENTRATE_CATEGORIE, USCITE_CATEGORIE
 
 
@@ -214,24 +219,18 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
     """
     Prende la lista di voci grezze estratte dall'AI (ognuna con
     'descrizione', 'importo', 'tipo': 'entrata'|'uscita') e restituisce un
-    RiclassificazioneResult con gli importi gia' sommati per categoria,
-    usando la classificazione deterministica basata su parole chiave.
+    RiclassificazioneResult con, per ciascuna categoria, la lista delle
+    voci originali assegnate (usando la classificazione deterministica
+    basata su parole chiave).
 
-    Ogni categoria configurata (config.py) e' sempre presente nel risultato,
-    con 0.0 se non ha ricevuto alcuna voce. Le righe di riepilogo/risultato
-    (es. "TOTALE RICAVI", "UTILE D'ESERCIZIO") vengono riconosciute e
-    scartate, per evitare di sommarle per errore nel conto riclassificato.
+    Ogni categoria configurata (config.py) e' sempre presente nel risultato
+    (con lista vuota se non ha ricevuto alcuna voce). Le righe di
+    riepilogo/risultato (es. "TOTALE RICAVI", "UTILE D'ESERCIZIO") vengono
+    riconosciute e scartate, per evitare di sommarle per errore nel conto
+    riclassificato.
     """
-    entrate: Dict[str, float] = {c: 0.0 for c in ENTRATE_CATEGORIE}
-    uscite: Dict[str, float] = {c: 0.0 for c in USCITE_CATEGORIE}
-    # Traccia anche, per ciascuna categoria, l'elenco delle singole voci
-    # originali che vi sono state assegnate (descrizione + importo): non
-    # serve per il calcolo del totale (gia' fatto sopra), ma permette
-    # all'interfaccia di mostrare un dettaglio verificabile di "quale voce
-    # e' finita in quale categoria", utile per controllare rapidamente che
-    # la classificazione sia corretta su un bilancio reale.
-    dettaglio_entrate: Dict[str, List[Dict]] = {c: [] for c in ENTRATE_CATEGORIE}
-    dettaglio_uscite: Dict[str, List[Dict]] = {c: [] for c in USCITE_CATEGORIE}
+    entrate: Dict[str, List[Voce]] = {c: [] for c in ENTRATE_CATEGORIE}
+    uscite: Dict[str, List[Voce]] = {c: [] for c in USCITE_CATEGORIE}
     note: List[str] = []
 
     for voce in voci:
@@ -252,15 +251,9 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
         categoria = _classifica_una_voce(descrizione, tipo_normalizzato)
 
         if tipo_normalizzato == "entrata":
-            entrate[categoria] = entrate.get(categoria, 0.0) + importo
-            dettaglio_entrate.setdefault(categoria, []).append(
-                {"descrizione": descrizione, "importo": importo}
-            )
+            entrate.setdefault(categoria, []).append(Voce(descrizione=descrizione, importo=importo))
         else:
-            uscite[categoria] = uscite.get(categoria, 0.0) + importo
-            dettaglio_uscite.setdefault(categoria, []).append(
-                {"descrizione": descrizione, "importo": importo}
-            )
+            uscite.setdefault(categoria, []).append(Voce(descrizione=descrizione, importo=importo))
 
         catchall = "Altro" if tipo_normalizzato == "entrata" else "Oneri diversi di gestione"
         if categoria == catchall:
@@ -274,6 +267,4 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
         uscite=uscite,
         gestione_fiscale={},
         note=note,
-        dettaglio_entrate=dettaglio_entrate,
-        dettaglio_uscite=dettaglio_uscite,
     )

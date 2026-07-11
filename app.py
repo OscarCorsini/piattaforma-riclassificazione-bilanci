@@ -433,29 +433,29 @@ if avvia:
 
             with st.expander(f"Dettaglio Voci estratte - anno {anno}"):
                 dettagli = []
-                for macro, voci in risultato.dettaglio_entrate.items():
+                for macro, voci in risultato.entrate.items():
                     for v in voci:
                         dettagli.append({
                             "Sezione": "Entrate",
                             "Categoria": macro,
-                            "Voce Originale": v["descrizione"],
-                            "Importo (EUR)": v["importo"],
+                            "Voce Originale": v.descrizione,
+                            "Importo (EUR)": v.importo,
                         })
-                for macro, voci in risultato.dettaglio_uscite.items():
+                for macro, voci in risultato.uscite.items():
                     for v in voci:
                         dettagli.append({
                             "Sezione": "Uscite",
                             "Categoria": macro,
-                            "Voce Originale": v["descrizione"],
-                            "Importo (EUR)": v["importo"],
+                            "Voce Originale": v.descrizione,
+                            "Importo (EUR)": v.importo,
                         })
-                for macro, valore in risultato.gestione_fiscale.items():
-                    if valore:
+                for macro, voci in risultato.gestione_fiscale.items():
+                    for v in voci:
                         dettagli.append({
                             "Sezione": "Gestione Fiscale",
                             "Categoria": macro,
-                            "Voce Originale": "(valore aggregato dal bilancio)",
-                            "Importo (EUR)": valore,
+                            "Voce Originale": v.descrizione,
+                            "Importo (EUR)": v.importo,
                         })
 
                 if dettagli:

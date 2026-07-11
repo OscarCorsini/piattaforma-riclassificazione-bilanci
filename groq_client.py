@@ -37,6 +37,17 @@ In questo modo l'AI non deve piu' prendere alcuna decisione delicata: deve
 solo leggere e trascrivere fedelmente, il che e' un compito molto piu'
 alla sua portata.
 
+STRUTTURA DEL RISULTATO:
+-------------------------
+RiclassificazioneResult tiene, per ciascuna categoria (entrate/uscite/
+gestione fiscale), la LISTA delle singole voci originali che vi sono state
+assegnate (oggetti Voce: descrizione + importo), non solo il totale. Questo
+permette sia di calcolare i totali per categoria (metodi totale_entrate(),
+totale_uscite(), totale_gestione_fiscale(), usati per scrivere le celle
+riassuntive nel template Excel) sia di generare un foglio di dettaglio con
+ogni singola voce originale (utile per verificare rapidamente che la
+classificazione sia corretta su un bilancio reale).
+
 Questo modulo quindi:
   1. Costruisce un prompt che chiede l'estrazione strutturata di ogni voce
      (inclusi i codici conto, quando presenti).
@@ -71,18 +82,30 @@ class GroqResponseError(Exception):
 
 
 @dataclass
+class Voce:
+    """Una singola voce originale del bilancio (descrizione + importo),
+    gia' assegnata a una categoria. Serve per mantenere il dettaglio
+    verificabile oltre al semplice totale per categoria."""
+    descrizione: str
+    importo: float
+
+
+@dataclass
 class RiclassificazioneResult:
-    entrate: Dict[str, float]
-    uscite: Dict[str, float]
-    gestione_fiscale: Dict[str, float]
-    note: List[str]
-    # Dettaglio delle singole voci originali assegnate a ciascuna categoria
-    # (categoria -> lista di {"descrizione", "importo"}): non usato per il
-    # calcolo (gia' fatto in entrate/uscite), serve solo per mostrare
-    # all'utente una verifica leggibile di come sono state classificate le
-    # voci del bilancio caricato.
-    dettaglio_entrate: Dict[str, List[Dict]] = field(default_factory=dict)
-    dettaglio_uscite: Dict[str, List[Dict]] = field(default_factory=dict)
+    # Categoria -> lista delle voci originali assegnate a quella categoria.
+    entrate: Dict[str, List[Voce]] = field(default_factory=dict)
+    uscite: Dict[str, List[Voce]] = field(default_factory=dict)
+    gestione_fiscale: Dict[str, List[Voce]] = field(default_factory=dict)
+    note: List[str] = field(default_factory=list)
+
+    def totale_entrate(self) -> Dict[str, float]:
+        return {cat: sum(v.importo for v in voci) for cat, voci in self.entrate.items()}
+
+    def totale_uscite(self) -> Dict[str, float]:
+        return {cat: sum(v.importo for v in voci) for cat, voci in self.uscite.items()}
+
+    def totale_gestione_fiscale(self) -> Dict[str, float]:
+        return {cat: sum(v.importo for v in voci) for cat, voci in self.gestione_fiscale.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -313,13 +336,13 @@ def riclassifica_bilancio(anno: str, testi_pdf: List[str]) -> RiclassificazioneR
     Punto di ingresso principale del modulo: prende il testo estratto dai
     PDF caricati, chiede a Groq di ESTRARRE (non classificare) ogni voce, e
     poi usa il classificatore deterministico (classificatore.py) per
-    assegnare ciascuna voce alla categoria corretta e sommare gli importi.
+    assegnare ciascuna voce alla categoria corretta.
 
     Solleva GroqConfigError se la chiave API non e' impostata, e
     GroqResponseError se la risposta non rispetta il formato atteso.
     """
     # Import locale per evitare un ciclo di import (classificatore.py
-    # importa RiclassificazioneResult da questo stesso modulo).
+    # importa RiclassificazioneResult/Voce da questo stesso modulo).
     from classificatore import classifica_voci, filtra_subtotali_gerarchia
 
     system_prompt = _build_system_prompt()
@@ -337,7 +360,16 @@ def riclassifica_bilancio(anno: str, testi_pdf: List[str]) -> RiclassificazioneR
     voci_filtrate = filtra_subtotali_gerarchia(dati["voci"])
 
     risultato = classifica_voci(voci_filtrate)
-    risultato.gestione_fiscale = dati["gestione_fiscale"]
     risultato.note = list(risultato.note) + list(dati["note"])
+
+    # La gestione fiscale non e' ricavata da singole voci del bilancio, ma
+    # estratta direttamente dall'AI come valore aggregato per categoria
+    # (es. IVA vendite VE26): viene "impacchettata" come una singola Voce
+    # sintetica per categoria, per restare coerente con la struttura
+    # Dict[str, List[Voce]] usata anche da entrate/uscite.
+    risultato.gestione_fiscale = {
+        categoria: [Voce(descrizione="(valore aggregato dal bilancio)", importo=valore)]
+        for categoria, valore in dati["gestione_fiscale"].items()
+    }
 
     return risultato
