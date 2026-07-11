@@ -15,19 +15,26 @@ scritti in un unico file Excel scaricabile.
 FLUSSO DI REVISIONE MANUALE (voce per voce, layout a due colonne):
 --------------------------------------------------------------------
 La classificazione automatica (parole chiave) resta come SUGGERIMENTO, ma
-non viene piu' applicata direttamente: dopo l'estrazione, ogni singola voce
-del bilancio viene mostrata all'utente in un pannello (colonna destra) con
-la categoria suggerita gia' pre-selezionata. Nella colonna sinistra e'
-visibile un'anteprima che si aggiorna automaticamente con i totali per
-categoria delle voci gia' confermate. L'utente conferma o corregge, ed
-eventualmente puo' assegnare un'etichetta personalizzata (max 30 caratteri)
-al posto del nome della categoria nel foglio di dettaglio, oppure scegliere
-"+ Nuova voce personalizzata" per creare una categoria completamente nuova:
-in tal caso viene inserita automaticamente una nuova riga nel file Excel
-finale, nella sezione Entrate o Uscite appropriata. Solo dopo aver
-confermato tutte le voci viene generato il file Excel finale. Questo
-elimina qualunque errore di classificazione automatica silenzioso: ogni
-importo che finisce in una cella e' stato validato da una persona.
+non viene piu' applicata direttamente: dopo l'estrazione, la sezione di
+caricamento PDF scompare del tutto e si entra in un layout a due colonne:
+
+  - colonna sinistra: un'anteprima che mostra TUTTE le categorie del
+    template Excel (Entrate e Uscite, con i relativi totali), aggiornata
+    automaticamente ad ogni voce confermata, per dare la sensazione di
+    vedere il file "compilarsi" mano a mano;
+  - colonna destra: la voce corrente da confermare, con la categoria
+    suggerita gia' pre-selezionata.
+
+L'utente conferma o corregge, ed eventualmente puo' assegnare un'etichetta
+personalizzata (max 30 caratteri) al posto del nome della categoria nel
+foglio di dettaglio, oppure scegliere "+ Nuova voce personalizzata" per
+creare una categoria completamente nuova: in tal caso viene inserita
+automaticamente una nuova riga nel file Excel finale, nella sezione Entrate
+o Uscite appropriata. Solo dopo aver confermato tutte le voci viene
+generato il vero file .xlsx (una sola volta, per non appesantire ogni
+singolo click). Questo elimina qualunque errore di classificazione
+automatica silenzioso: ogni importo che finisce in una cella e' stato
+validato da una persona.
 
 Avvio:
     streamlit run app.py
@@ -374,21 +381,39 @@ def _riepilogo_confermate_per_categoria() -> dict:
 
 
 def _pannello_anteprima():
+    """Mostra la struttura del file Excel (tutte le categorie del template,
+    Entrate e Uscite, con i relativi totali) cosi' come si trova IN QUESTO
+    MOMENTO: ogni voce confermata aggiorna subito la riga corrispondente,
+    dando la sensazione di vedere il file "compilarsi" mano a mano, senza
+    pero' dover riscrivere il vero file .xlsx ad ogni singolo click (troppo
+    lento da fare ad ogni voce): il file .xlsx reale viene generato una sola
+    volta, alla fine, quando tutte le voci sono state confermate."""
     st.markdown("**Anteprima Excel**")
-    st.caption("Si aggiorna automaticamente ad ogni voce confermata.")
+    st.caption("Questa e' la struttura del file: si aggiorna ad ogni voce confermata.")
     riepilogo = _riepilogo_confermate_per_categoria()
 
-    for etichetta_sezione, tipo in (("Entrate", "entrata"), ("Uscite", "uscita")):
+    for etichetta_sezione, tipo, categorie_base in (
+        ("Entrate", "entrata", ENTRATE_CATEGORIE),
+        ("Uscite", "uscita", USCITE_CATEGORIE),
+    ):
         st.markdown(f"###### {etichetta_sezione}")
         dati = riepilogo[tipo]
-        if dati:
-            righe = [
-                {"Categoria": categoria, "Importo (EUR)": _formatta_euro(valore)}
-                for categoria, valore in sorted(dati.items(), key=lambda kv: -kv[1])
-            ]
-            st.dataframe(righe, use_container_width=True, hide_index=True)
-        else:
-            st.caption("Nessuna voce ancora confermata.")
+        categorie_ordinate = list(categorie_base) + [
+            c for c in dati.keys() if c not in categorie_base
+        ]
+        righe = [
+            {"Categoria": categoria, "Importo (EUR)": _formatta_euro(dati.get(categoria, 0.0))}
+            for categoria in categorie_ordinate
+        ]
+        righe.append({
+            "Categoria": f"Totale {etichetta_sezione.lower()}",
+            "Importo (EUR)": _formatta_euro(sum(dati.values())),
+        })
+        st.dataframe(righe, use_container_width=True, hide_index=True)
+
+    totale_entrate = sum(riepilogo["entrata"].values())
+    totale_uscite = sum(riepilogo["uscita"].values())
+    st.markdown(f"**Risultato provvisorio: {_formatta_euro(totale_entrate - totale_uscite)}**")
 
 
 def _form_revisione_voce():
@@ -502,89 +527,98 @@ def _costruisci_risultati_per_anno() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# STEP UNICO - SELEZIONE ANNI E CARICAMENTO PDF
+# STEP UNICO - SELEZIONE ANNI E CARICAMENTO PDF (solo prima di avviare)
 # ---------------------------------------------------------------------------
-with st.container(border=True):
-    st.markdown('<div class="step-label">Situazioni contabili</div>', unsafe_allow_html=True)
-    st.subheader("Seleziona l'anno e carica i documenti")
-    st.caption(
-        "Il modello Excel e' quello aziendale standard: non serve caricarlo. "
-        "Puoi elaborare piu' anni nella stessa esecuzione: aggiungi una riga "
-        "per ciascun anno da compilare."
-    )
+# L'intera sezione di caricamento (upload PDF + bottone "Avvia estrazione")
+# viene mostrata SOLO quando il wizard e' "idle": una volta avviata la
+# revisione voce-per-voce, questi widget non vengono piu' istanziati per
+# tutta la durata della revisione. In precedenza restavano visibili (solo
+# disattivati) e venivano comunque ricreati ad ogni rerun anche durante la
+# revisione: e' questo che causava il reset dell'app alla schermata
+# iniziale di caricamento non appena si confermava la prima voce.
+avvia = False
+righe_valide = []
 
-    righe_dati = []
-
-    if "righe_ids" not in st.session_state:
-        st.session_state.righe_ids = [0]
-    if "prossimo_id" not in st.session_state:
-        st.session_state.prossimo_id = 1
-
-    def _aggiungi_riga():
-        st.session_state.righe_ids.append(st.session_state.prossimo_id)
-        st.session_state.prossimo_id += 1
-
-    def _rimuovi_riga(riga_id: int):
-        if riga_id in st.session_state.righe_ids:
-            st.session_state.righe_ids.remove(riga_id)
-        if not st.session_state.righe_ids:
-            st.session_state.righe_ids = [st.session_state.prossimo_id]
-            st.session_state.prossimo_id += 1
-
-    for riga_id in list(st.session_state.righe_ids):
-        with st.container(key=f"riga_{riga_id}"):
-            col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
-            with col_anno:
-                anno_scelto = st.selectbox(
-                    "Anno",
-                    options=opzioni_anni,
-                    key=f"anno_{riga_id}",
-                )
-            with col_upload:
-                file_pdf = st.file_uploader(
-                    "PDF situazione contabile",
-                    type=["pdf"],
-                    accept_multiple_files=True,
-                    key=f"pdf_{riga_id}",
-                )
-            with col_rimuovi:
-                st.button("X", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
-        righe_dati.append((anno_scelto, file_pdf))
-
-    col_add, col_info = st.columns([2, 5])
-    with col_add:
-        st.button("+ Aggiungi un altro anno", on_click=_aggiungi_riga, use_container_width=True)
-    with col_info:
-        st.markdown(
-            f'<div class="anni-info">Anni disponibili nel template: {", ".join(opzioni_anni)}</div>',
-            unsafe_allow_html=True,
+if st.session_state.wiz_fase == "idle":
+    with st.container(border=True):
+        st.markdown('<div class="step-label">Situazioni contabili</div>', unsafe_allow_html=True)
+        st.subheader("Seleziona l'anno e carica i documenti")
+        st.caption(
+            "Il modello Excel e' quello aziendale standard: non serve caricarlo. "
+            "Puoi elaborare piu' anni nella stessa esecuzione: aggiungi una riga "
+            "per ciascun anno da compilare."
         )
 
+        righe_dati = []
 
-# ---------------------------------------------------------------------------
-# STEP FINALE - ELABORAZIONE
-# ---------------------------------------------------------------------------
-with st.container(border=True):
-    st.markdown('<div class="step-label">Elaborazione</div>', unsafe_allow_html=True)
-    st.subheader("Estrai le voci e confermale una per una")
-    st.caption(
-        "Per ogni voce di ricavo o costo rilevata nel bilancio verra' "
-        "chiesta conferma della categoria (con un suggerimento gia' "
-        "pre-selezionato): puoi accettarlo o correggerlo prima di generare "
-        "l'Excel finale."
-    )
+        if "righe_ids" not in st.session_state:
+            st.session_state.righe_ids = [0]
+        if "prossimo_id" not in st.session_state:
+            st.session_state.prossimo_id = 1
+
+        def _aggiungi_riga():
+            st.session_state.righe_ids.append(st.session_state.prossimo_id)
+            st.session_state.prossimo_id += 1
+
+        def _rimuovi_riga(riga_id: int):
+            if riga_id in st.session_state.righe_ids:
+                st.session_state.righe_ids.remove(riga_id)
+            if not st.session_state.righe_ids:
+                st.session_state.righe_ids = [st.session_state.prossimo_id]
+                st.session_state.prossimo_id += 1
+
+        for riga_id in list(st.session_state.righe_ids):
+            with st.container(key=f"riga_{riga_id}"):
+                col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
+                with col_anno:
+                    anno_scelto = st.selectbox(
+                        "Anno",
+                        options=opzioni_anni,
+                        key=f"anno_{riga_id}",
+                    )
+                with col_upload:
+                    file_pdf = st.file_uploader(
+                        "PDF situazione contabile",
+                        type=["pdf"],
+                        accept_multiple_files=True,
+                        key=f"pdf_{riga_id}",
+                    )
+                with col_rimuovi:
+                    st.button("X", key=f"del_{riga_id}", on_click=_rimuovi_riga, args=(riga_id,))
+            righe_dati.append((anno_scelto, file_pdf))
+
+        col_add, col_info = st.columns([2, 5])
+        with col_add:
+            st.button("+ Aggiungi un altro anno", on_click=_aggiungi_riga, use_container_width=True)
+        with col_info:
+            st.markdown(
+                f'<div class="anni-info">Anni disponibili nel template: {", ".join(opzioni_anni)}</div>',
+                unsafe_allow_html=True,
+            )
 
     righe_valide = [(anno, files) for anno, files in righe_dati if files]
-    pronto = len(righe_valide) > 0 and st.session_state.wiz_fase == "idle"
 
-    avvia = st.button(
-        "Avvia estrazione",
-        disabled=not (len(righe_valide) > 0 and st.session_state.wiz_fase == "idle"),
-        use_container_width=True,
-    )
+    # -----------------------------------------------------------------------
+    # STEP FINALE - ELABORAZIONE
+    # -----------------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown('<div class="step-label">Elaborazione</div>', unsafe_allow_html=True)
+        st.subheader("Estrai le voci e confermale una per una")
+        st.caption(
+            "Per ogni voce di ricavo o costo rilevata nel bilancio verra' "
+            "chiesta conferma della categoria (con un suggerimento gia' "
+            "pre-selezionato): puoi accettarlo o correggerlo prima di generare "
+            "l'Excel finale."
+        )
 
-    if len(righe_valide) == 0:
-        st.caption("Carica almeno un PDF per un anno per procedere.")
+        avvia = st.button(
+            "Avvia estrazione",
+            disabled=len(righe_valide) == 0,
+            use_container_width=True,
+        )
+
+        if len(righe_valide) == 0:
+            st.caption("Carica almeno un PDF per un anno per procedere.")
 
 
 # ---------------------------------------------------------------------------
