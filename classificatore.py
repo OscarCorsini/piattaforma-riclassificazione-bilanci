@@ -268,3 +268,14 @@ def classifica_voci(voci: List[Dict]) -> RiclassificazioneResult:
         gestione_fiscale={},
         note=note,
     )
+
+
+def suggerisci_categoria(descrizione: str, tipo: str) -> str:
+    """
+    Wrapper pubblico di _classifica_una_voce: restituisce la categoria
+    suggerita per una singola voce (usata come default pre-selezionato nel
+    menu a tendina del flusso di revisione manuale voce-per-voce).
+    L'utente puo' sempre confermare o correggere il suggerimento.
+    """
+    tipo_normalizzato = "entrata" if str(tipo).strip().lower().startswith("entrat") else "uscita"
+    return _classifica_una_voce(descrizione, tipo_normalizzato)

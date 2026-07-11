@@ -373,3 +373,32 @@ def riclassifica_bilancio(anno: str, testi_pdf: List[str]) -> RiclassificazioneR
     }
 
     return risultato
+
+
+# ---------------------------------------------------------------------------
+# FUNZIONE PUBBLICA: SOLA ESTRAZIONE (per il flusso di revisione manuale)
+# ---------------------------------------------------------------------------
+def estrai_voci_bilancio(anno: str, testi_pdf: List[str]) -> Dict:
+    """
+    Come riclassifica_bilancio, ma SENZA applicare la classificazione
+    automatica per categoria: restituisce le voci grezze (gia' passate
+    dalla deduplicazione gerarchica) cosi' come sono, per permettere
+    all'utente di confermarle/correggerle una per una nell'interfaccia
+    (flusso a popup).
+
+    Restituisce un dict con:
+      - "voci": lista di dict {"descrizione", "codice_conto", "importo", "tipo"}
+      - "gestione_fiscale": dict {categoria: valore_numerico}
+      - "note": lista di osservazioni testuali
+    """
+    from classificatore import filtra_subtotali_gerarchia
+
+    system_prompt = _build_system_prompt()
+    user_prompt = _build_user_prompt(anno, testi_pdf)
+
+    raw_response = _call_model(system_prompt, user_prompt)
+    dati = _parse_voci_response(raw_response)
+
+    dati["voci"] = filtra_subtotali_gerarchia(dati["voci"])
+
+    return dati

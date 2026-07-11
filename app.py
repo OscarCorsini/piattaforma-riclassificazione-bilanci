@@ -12,6 +12,18 @@ anni nella stessa sessione: per ciascun anno si sceglie il periodo da un
 menu a tendina e si caricano i PDF corrispondenti; tutti gli anni vengono
 scritti in un unico file Excel scaricabile.
 
+FLUSSO DI REVISIONE MANUALE (voce per voce):
+---------------------------------------------
+La classificazione automatica (parole chiave) resta come SUGGERIMENTO, ma
+non viene piu' applicata direttamente: dopo l'estrazione, ogni singola voce
+del bilancio viene mostrata all'utente in un popup con la categoria
+suggerita gia' pre-selezionata. L'utente conferma o corregge, ed
+eventualmente puo' assegnare un'etichetta personalizzata (max 20 caratteri)
+al posto del nome della categoria nel foglio di dettaglio. Solo dopo aver
+confermato tutte le voci viene generato il file Excel finale. Questo
+elimina qualunque errore di classificazione automatica silenzioso: ogni
+importo che finisce in una cella e' stato validato da una persona.
+
 Avvio:
     streamlit run app.py
 
@@ -24,13 +36,16 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config import ANNI_DISPONIBILI, PALETTE
+from config import ANNI_DISPONIBILI, PALETTE, ENTRATE_CATEGORIE, USCITE_CATEGORIE
 from pdf_extractor import extract_text_from_multiple_pdfs, PDFExtractionError
 from groq_client import (
-    riclassifica_bilancio,
+    estrai_voci_bilancio,
     GroqConfigError,
     GroqResponseError,
+    Voce,
+    RiclassificazioneResult,
 )
+from classificatore import suggerisci_categoria
 from excel_writer import (
     carica_template_predefinito,
     rileva_anni_disponibili,
@@ -314,25 +329,110 @@ if not anni_rilevati:
 
 
 # ---------------------------------------------------------------------------
-# STATO: RIGHE ANNO + PDF
+# STATO WIZARD DI REVISIONE VOCE-PER-VOCE
 # ---------------------------------------------------------------------------
-if "righe_ids" not in st.session_state:
-    st.session_state.righe_ids = [0]
-if "prossimo_id" not in st.session_state:
-    st.session_state.prossimo_id = 1
+def _reset_wizard():
+    st.session_state.wiz_fase = "idle"
+    st.session_state.wiz_voci = []
+    st.session_state.wiz_indice = 0
+    st.session_state.wiz_confermate = []
+    st.session_state.wiz_gestione_fiscale = {}
+    st.session_state.wiz_note = {}
+    st.session_state.wiz_errori = {}
+    st.session_state.wiz_buffer = None
+    st.session_state.wiz_report = None
+    st.session_state.wiz_errori_scrittura = None
 
 
-def _aggiungi_riga():
-    st.session_state.righe_ids.append(st.session_state.prossimo_id)
-    st.session_state.prossimo_id += 1
+if "wiz_fase" not in st.session_state:
+    _reset_wizard()
 
 
-def _rimuovi_riga(riga_id: int):
-    if riga_id in st.session_state.righe_ids:
-        st.session_state.righe_ids.remove(riga_id)
-    if not st.session_state.righe_ids:
-        st.session_state.righe_ids = [st.session_state.prossimo_id]
-        st.session_state.prossimo_id += 1
+def _formatta_euro(valore: float) -> str:
+    testo = f"{valore:,.2f}"
+    testo = testo.replace(",", "§").replace(".", ",").replace("§", ".")
+    return f"€ {testo}"
+
+
+@st.dialog("Conferma voce estratta")
+def _popup_revisione_voce():
+    idx = st.session_state.wiz_indice
+    voci = st.session_state.wiz_voci
+    voce = voci[idx]
+
+    st.caption(f"Voce {idx + 1} di {len(voci)} — Anno {voce['anno']}")
+    sezione = "Ricavo" if voce["tipo"] == "entrata" else "Costo"
+    st.markdown(f"**{sezione} rilevato dal bilancio:** {voce['descrizione']}")
+    st.markdown(f"**Importo:** {_formatta_euro(voce['importo'])}")
+
+    categorie = ENTRATE_CATEGORIE if voce["tipo"] == "entrata" else USCITE_CATEGORIE
+    default_index = (
+        categorie.index(voce["categoria_suggerita"])
+        if voce["categoria_suggerita"] in categorie
+        else 0
+    )
+    scelta = st.selectbox("Allocazione (voce del template)", options=categorie, index=default_index)
+    etichetta_custom = st.text_input(
+        "Etichetta personalizzata (opzionale, max 20 caratteri)",
+        max_chars=20,
+        placeholder=scelta,
+    )
+
+    col_conferma, col_salta = st.columns(2)
+    with col_conferma:
+        if st.button("Conferma", type="primary", use_container_width=True):
+            descrizione_finale = etichetta_custom.strip() or scelta
+            st.session_state.wiz_confermate.append({
+                "anno": voce["anno"],
+                "categoria": scelta,
+                "descrizione": descrizione_finale,
+                "importo": voce["importo"],
+                "tipo": voce["tipo"],
+            })
+            st.session_state.wiz_indice += 1
+            st.rerun()
+    with col_salta:
+        if st.button("Salta questa voce", use_container_width=True):
+            st.session_state.wiz_indice += 1
+            st.rerun()
+
+
+def _costruisci_risultati_per_anno() -> dict:
+    """Trasforma le scelte confermate voce-per-voce in un
+    RiclassificazioneResult per anno, pronto per essere scritto nel
+    template Excel."""
+    risultati_per_anno: dict = {}
+
+    anni_coinvolti = set(c["anno"] for c in st.session_state.wiz_confermate)
+    anni_coinvolti |= set(st.session_state.wiz_gestione_fiscale.keys())
+
+    for anno in anni_coinvolti:
+        entrate = {c: [] for c in ENTRATE_CATEGORIE}
+        uscite = {c: [] for c in USCITE_CATEGORIE}
+
+        for conferma in st.session_state.wiz_confermate:
+            if conferma["anno"] != anno:
+                continue
+            voce_obj = Voce(descrizione=conferma["descrizione"], importo=conferma["importo"])
+            if conferma["tipo"] == "entrata":
+                entrate.setdefault(conferma["categoria"], []).append(voce_obj)
+            else:
+                uscite.setdefault(conferma["categoria"], []).append(voce_obj)
+
+        gestione_fiscale_anno = st.session_state.wiz_gestione_fiscale.get(anno, {})
+        gestione_fiscale = {
+            categoria: [Voce(descrizione="(valore aggregato dal bilancio)", importo=valore)]
+            for categoria, valore in gestione_fiscale_anno.items()
+        }
+
+        risultati_per_anno[anno] = RiclassificazioneResult(
+            entrate=entrate,
+            uscite=uscite,
+            gestione_fiscale=gestione_fiscale,
+            note=st.session_state.wiz_note.get(anno, []),
+        )
+
+    return risultati_per_anno
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +448,23 @@ with st.container(border=True):
     )
 
     righe_dati = []
+
+    if "righe_ids" not in st.session_state:
+        st.session_state.righe_ids = [0]
+    if "prossimo_id" not in st.session_state:
+        st.session_state.prossimo_id = 1
+
+    def _aggiungi_riga():
+        st.session_state.righe_ids.append(st.session_state.prossimo_id)
+        st.session_state.prossimo_id += 1
+
+    def _rimuovi_riga(riga_id: int):
+        if riga_id in st.session_state.righe_ids:
+            st.session_state.righe_ids.remove(riga_id)
+        if not st.session_state.righe_ids:
+            st.session_state.righe_ids = [st.session_state.prossimo_id]
+            st.session_state.prossimo_id += 1
+
     for riga_id in list(st.session_state.righe_ids):
         with st.container(key=f"riga_{riga_id}"):
             col_anno, col_upload, col_rimuovi = st.columns([2, 5, 1])
@@ -383,25 +500,38 @@ with st.container(border=True):
 # ---------------------------------------------------------------------------
 with st.container(border=True):
     st.markdown('<div class="step-label">Elaborazione</div>', unsafe_allow_html=True)
-    st.subheader("Genera il file Excel completato")
+    st.subheader("Estrai le voci e confermale una per una")
+    st.caption(
+        "Per ogni voce di ricavo o costo rilevata nel bilancio verra' "
+        "chiesta conferma della categoria (con un suggerimento gia' "
+        "pre-selezionato): puoi accettarlo o correggerlo prima di generare "
+        "l'Excel finale."
+    )
 
     righe_valide = [(anno, files) for anno, files in righe_dati if files]
-    pronto = len(righe_valide) > 0
+    pronto = len(righe_valide) > 0 and st.session_state.wiz_fase == "idle"
 
-    avvia = st.button("Avvia elaborazione", disabled=not pronto, use_container_width=True)
+    avvia = st.button(
+        "Avvia estrazione",
+        disabled=not (len(righe_valide) > 0 and st.session_state.wiz_fase == "idle"),
+        use_container_width=True,
+    )
 
-    if not pronto:
+    if len(righe_valide) == 0:
         st.caption("Carica almeno un PDF per un anno per procedere.")
 
 
 # ---------------------------------------------------------------------------
-# LOGICA DI ELABORAZIONE
+# FASE 1: ESTRAZIONE (chiama l'AI, prepara la coda di voci da revisionare)
 # ---------------------------------------------------------------------------
 if avvia:
-    risultati_per_anno = {}
+    _reset_wizard()
+    voci_totali = []
+    gestione_fiscale_per_anno = {}
+    note_per_anno = {}
     errori_gruppo = {}
 
-    with st.status("Elaborazione in corso...", expanded=True) as status:
+    with st.status("Estrazione in corso...", expanded=True) as status:
         for anno, files in righe_valide:
             status.write(f"Anno {anno}: estrazione testo dai PDF...")
             try:
@@ -415,9 +545,9 @@ if avvia:
                 for w in doc.warnings:
                     st.warning(f"Anno {anno} - '{doc.filename}': {w}")
 
-            status.write(f"Anno {anno}: riclassificazione in corso...")
+            status.write(f"Anno {anno}: lettura voci dal bilancio...")
             try:
-                risultato = riclassifica_bilancio(anno, testi)
+                dati = estrai_voci_bilancio(anno, testi)
             except GroqConfigError as e:
                 status.update(label="Configurazione mancante", state="error")
                 st.error(
@@ -429,87 +559,134 @@ if avvia:
                 errori_gruppo[anno] = f"Risposta non nel formato atteso: {e}"
                 continue
 
-            risultati_per_anno[anno] = risultato
+            for voce_raw in dati["voci"]:
+                descrizione = voce_raw.get("descrizione", "")
+                tipo = str(voce_raw.get("tipo", "")).strip().lower()
+                tipo_normalizzato = "entrata" if tipo.startswith("entrat") else "uscita"
+                try:
+                    importo = float(voce_raw.get("importo", 0.0))
+                except (TypeError, ValueError):
+                    importo = 0.0
+                if not descrizione or importo == 0.0:
+                    continue
+                voci_totali.append({
+                    "anno": anno,
+                    "descrizione": descrizione,
+                    "importo": importo,
+                    "tipo": tipo_normalizzato,
+                    "categoria_suggerita": suggerisci_categoria(descrizione, tipo_normalizzato),
+                })
 
-            with st.expander(f"Dettaglio Voci estratte - anno {anno}"):
-                dettagli = []
-                for macro, voci in risultato.entrate.items():
-                    for v in voci:
-                        dettagli.append({
-                            "Sezione": "Entrate",
-                            "Categoria": macro,
-                            "Voce Originale": v.descrizione,
-                            "Importo (EUR)": v.importo,
-                        })
-                for macro, voci in risultato.uscite.items():
-                    for v in voci:
-                        dettagli.append({
-                            "Sezione": "Uscite",
-                            "Categoria": macro,
-                            "Voce Originale": v.descrizione,
-                            "Importo (EUR)": v.importo,
-                        })
-                for macro, voci in risultato.gestione_fiscale.items():
-                    for v in voci:
-                        dettagli.append({
-                            "Sezione": "Gestione Fiscale",
-                            "Categoria": macro,
-                            "Voce Originale": v.descrizione,
-                            "Importo (EUR)": v.importo,
-                        })
+            gestione_fiscale_per_anno[anno] = dati["gestione_fiscale"]
+            note_per_anno[anno] = dati["note"]
 
-                if dettagli:
-                    st.dataframe(dettagli, use_container_width=True)
-                else:
-                    st.info("Nessun dettaglio estratto.")
-
-            if risultato.note:
-                with st.expander(f"Osservazioni - anno {anno}"):
-                    for nota in risultato.note:
-                        st.write(f"- {nota}")
-
-        if not risultati_per_anno:
+        if not voci_totali and not gestione_fiscale_per_anno:
             status.update(label="Nessun anno elaborato con successo", state="error")
             for anno, msg in errori_gruppo.items():
                 st.error(f"**Anno {anno}:** {msg}")
             st.stop()
 
-        status.write("Popolamento del template Excel...")
+        status.update(
+            label=f"Estrazione completata - {len(voci_totali)} voci da confermare",
+            state="complete",
+        )
+
+    st.session_state.wiz_voci = voci_totali
+    st.session_state.wiz_gestione_fiscale = gestione_fiscale_per_anno
+    st.session_state.wiz_note = note_per_anno
+    st.session_state.wiz_errori = errori_gruppo
+    st.session_state.wiz_indice = 0
+    st.session_state.wiz_confermate = []
+    st.session_state.wiz_fase = "revisione" if voci_totali else "completato"
+    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# FASE 2: REVISIONE (un popup per voce, in sequenza)
+# ---------------------------------------------------------------------------
+if st.session_state.wiz_fase == "revisione":
+    idx = st.session_state.wiz_indice
+    totale = len(st.session_state.wiz_voci)
+
+    if idx < totale:
+        st.progress(idx / totale, text=f"Revisione voce {idx + 1} di {totale}")
+        _popup_revisione_voce()
+    else:
+        st.session_state.wiz_fase = "completato"
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# FASE 3: COMPLETATO - genera l'Excel dalle scelte confermate
+# ---------------------------------------------------------------------------
+if st.session_state.wiz_fase == "completato":
+    for anno, msg in st.session_state.wiz_errori.items():
+        st.warning(f"Anno {anno} non elaborato: {msg}")
+
+    if st.session_state.wiz_buffer is None:
+        risultati_per_anno = _costruisci_risultati_per_anno()
+
+        if not risultati_per_anno:
+            st.error("Nessuna voce confermata: impossibile generare l'Excel.")
+            st.button("Ricomincia", on_click=_reset_wizard, use_container_width=True)
+            st.stop()
+
         try:
             buffer, report_per_anno, errori_scrittura = popola_template_multi(
                 template_bytes, risultati_per_anno
             )
         except ExcelTemplateError as e:
-            status.update(label="Errore nel file Excel", state="error")
             st.error(f"**Errore nel template Excel.**\n\n{e}")
+            st.button("Ricomincia", on_click=_reset_wizard, use_container_width=True)
             st.stop()
 
-        for anno, msg in errori_gruppo.items():
-            st.warning(f"Anno {anno} non elaborato: {msg}")
-        for anno, msg in errori_scrittura.items():
-            st.warning(f"Anno {anno} non scritto nel file: {msg}")
+        st.session_state.wiz_buffer = buffer
+        st.session_state.wiz_report = report_per_anno
+        st.session_state.wiz_errori_scrittura = errori_scrittura
 
-        for anno, report in report_per_anno.items():
-            if report.voci_non_mappate:
-                st.warning(
-                    f"Anno {anno}: le seguenti categorie non sono state trovate "
-                    "nel template e non sono state scritte: "
-                    + ", ".join(report.voci_non_mappate)
-                )
+    report_per_anno = st.session_state.wiz_report
+    errori_scrittura = st.session_state.wiz_errori_scrittura
 
-        totale_celle = sum(r.celle_scritte for r in report_per_anno.values())
-        status.update(
-            label=f"Completato - {totale_celle} celle aggiornate su {len(report_per_anno)} anni",
-            state="complete",
-        )
+    for anno, msg in errori_scrittura.items():
+        st.warning(f"Anno {anno} non scritto nel file: {msg}")
 
+    for anno, report in report_per_anno.items():
+        if report.voci_non_mappate:
+            st.warning(
+                f"Anno {anno}: le seguenti categorie non sono state trovate "
+                "nel template e non sono state scritte: "
+                + ", ".join(report.voci_non_mappate)
+            )
+
+    with st.expander("Dettaglio voci confermate"):
+        dettagli = [
+            {
+                "Anno": c["anno"],
+                "Sezione": "Entrate" if c["tipo"] == "entrata" else "Uscite",
+                "Categoria": c["categoria"],
+                "Etichetta": c["descrizione"],
+                "Importo (EUR)": c["importo"],
+            }
+            for c in st.session_state.wiz_confermate
+        ]
+        if dettagli:
+            st.dataframe(dettagli, use_container_width=True)
+        else:
+            st.info("Nessuna voce confermata.")
+
+    totale_celle = sum(r.celle_scritte for r in report_per_anno.values())
     anni_ok = ", ".join(sorted(report_per_anno.keys()))
-    st.success(f"Elaborazione completata per gli anni: {anni_ok}.")
+    st.success(
+        f"Elaborazione completata per gli anni: {anni_ok} "
+        f"({totale_celle} celle aggiornate)."
+    )
 
     st.download_button(
         label="Scarica il file Excel completato",
-        data=buffer,
+        data=st.session_state.wiz_buffer,
         file_name="Riclassificazione_bilancio.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
+
+    st.button("Nuova elaborazione", on_click=_reset_wizard, use_container_width=True)
