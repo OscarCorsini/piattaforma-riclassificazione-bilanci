@@ -12,14 +12,19 @@ anni nella stessa sessione: per ciascun anno si sceglie il periodo da un
 menu a tendina e si caricano i PDF corrispondenti; tutti gli anni vengono
 scritti in un unico file Excel scaricabile.
 
-FLUSSO DI REVISIONE MANUALE (voce per voce):
----------------------------------------------
+FLUSSO DI REVISIONE MANUALE (voce per voce, layout a due colonne):
+--------------------------------------------------------------------
 La classificazione automatica (parole chiave) resta come SUGGERIMENTO, ma
 non viene piu' applicata direttamente: dopo l'estrazione, ogni singola voce
-del bilancio viene mostrata all'utente in un popup con la categoria
-suggerita gia' pre-selezionata. L'utente conferma o corregge, ed
-eventualmente puo' assegnare un'etichetta personalizzata (max 20 caratteri)
-al posto del nome della categoria nel foglio di dettaglio. Solo dopo aver
+del bilancio viene mostrata all'utente in un pannello (colonna destra) con
+la categoria suggerita gia' pre-selezionata. Nella colonna sinistra e'
+visibile un'anteprima che si aggiorna automaticamente con i totali per
+categoria delle voci gia' confermate. L'utente conferma o corregge, ed
+eventualmente puo' assegnare un'etichetta personalizzata (max 30 caratteri)
+al posto del nome della categoria nel foglio di dettaglio, oppure scegliere
+"+ Nuova voce personalizzata" per creare una categoria completamente nuova:
+in tal caso viene inserita automaticamente una nuova riga nel file Excel
+finale, nella sezione Entrate o Uscite appropriata. Solo dopo aver
 confermato tutte le voci viene generato il file Excel finale. Questo
 elimina qualunque errore di classificazione automatica silenzioso: ogni
 importo che finisce in una cella e' stato validato da una persona.
@@ -54,13 +59,16 @@ from excel_writer import (
 )
 
 
+NUOVA_VOCE_SENTINEL = "+ Nuova voce personalizzata"
+
+
 # ---------------------------------------------------------------------------
 # CONFIGURAZIONE PAGINA E STILE
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="Riclassificazione Finanziaria | Piattaforma Agritech",
     page_icon="\U0001F4CA",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
@@ -104,7 +112,7 @@ CUSTOM_CSS = f"""
     }}
 
     .block-container {{
-        max-width: 820px;
+        max-width: 1180px;
         padding-top: 2.6rem;
         padding-bottom: 3rem;
     }}
@@ -354,37 +362,92 @@ def _formatta_euro(valore: float) -> str:
     return f"€ {testo}"
 
 
-@st.dialog("Conferma voce estratta")
-def _popup_revisione_voce():
+def _riepilogo_confermate_per_categoria() -> dict:
+    """Aggrega le voci confermate finora per sezione/categoria: alimenta
+    l'anteprima nella colonna sinistra, che si aggiorna automaticamente ad
+    ogni conferma senza dover rigenerare l'intero file Excel (troppo lento
+    da fare ad ogni singolo click)."""
+    riepilogo = {"entrata": {}, "uscita": {}}
+    for c in st.session_state.wiz_confermate:
+        riepilogo[c["tipo"]][c["categoria"]] = riepilogo[c["tipo"]].get(c["categoria"], 0.0) + c["importo"]
+    return riepilogo
+
+
+def _pannello_anteprima():
+    st.markdown("**Anteprima Excel**")
+    st.caption("Si aggiorna automaticamente ad ogni voce confermata.")
+    riepilogo = _riepilogo_confermate_per_categoria()
+
+    for etichetta_sezione, tipo in (("Entrate", "entrata"), ("Uscite", "uscita")):
+        st.markdown(f"###### {etichetta_sezione}")
+        dati = riepilogo[tipo]
+        if dati:
+            righe = [
+                {"Categoria": categoria, "Importo (EUR)": _formatta_euro(valore)}
+                for categoria, valore in sorted(dati.items(), key=lambda kv: -kv[1])
+            ]
+            st.dataframe(righe, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Nessuna voce ancora confermata.")
+
+
+def _form_revisione_voce():
     idx = st.session_state.wiz_indice
     voci = st.session_state.wiz_voci
+    totale = len(voci)
     voce = voci[idx]
 
-    st.caption(f"Voce {idx + 1} di {len(voci)} — Anno {voce['anno']}")
-    sezione = "Ricavo" if voce["tipo"] == "entrata" else "Costo"
-    st.markdown(f"**{sezione} rilevato dal bilancio:** {voce['descrizione']}")
+    st.markdown("**Conferma voce estratta**")
+    st.caption(f"Voce {idx + 1} di {totale} — Anno {voce['anno']}")
+    sezione_label = "Ricavo" if voce["tipo"] == "entrata" else "Costo"
+    st.markdown(f"**{sezione_label} rilevato dal bilancio:** {voce['descrizione']}")
     st.markdown(f"**Importo:** {_formatta_euro(voce['importo'])}")
 
-    categorie = ENTRATE_CATEGORIE if voce["tipo"] == "entrata" else USCITE_CATEGORIE
+    categorie_base = ENTRATE_CATEGORIE if voce["tipo"] == "entrata" else USCITE_CATEGORIE
+    categorie = list(categorie_base) + [NUOVA_VOCE_SENTINEL]
     default_index = (
-        categorie.index(voce["categoria_suggerita"])
-        if voce["categoria_suggerita"] in categorie
+        categorie_base.index(voce["categoria_suggerita"])
+        if voce["categoria_suggerita"] in categorie_base
         else 0
     )
-    scelta = st.selectbox("Allocazione (voce del template)", options=categorie, index=default_index)
-    etichetta_custom = st.text_input(
-        "Etichetta personalizzata (opzionale, max 20 caratteri)",
-        max_chars=20,
-        placeholder=scelta,
+    scelta = st.selectbox(
+        "Allocazione (voce del template)",
+        options=categorie,
+        index=default_index,
+        key=f"scelta_{idx}",
     )
+    is_nuova = scelta == NUOVA_VOCE_SENTINEL
+
+    etichetta_custom = st.text_input(
+        "Nome della nuova categoria (obbligatorio)" if is_nuova
+        else "Etichetta personalizzata (opzionale, max 30 caratteri)",
+        max_chars=30,
+        placeholder="" if is_nuova else scelta,
+        key=f"etichetta_{idx}",
+    )
+    if is_nuova:
+        st.caption(
+            "Verra' aggiunta automaticamente una nuova riga nel file Excel, "
+            "nella sezione Entrate o Uscite corrispondente."
+        )
+
+    disabled_conferma = is_nuova and not etichetta_custom.strip()
 
     col_conferma, col_salta = st.columns(2)
     with col_conferma:
-        if st.button("Conferma", type="primary", use_container_width=True):
-            descrizione_finale = etichetta_custom.strip() or scelta
+        if st.button(
+            "Conferma", type="primary", use_container_width=True,
+            disabled=disabled_conferma, key=f"conferma_{idx}",
+        ):
+            if is_nuova:
+                categoria_finale = etichetta_custom.strip()
+                descrizione_finale = categoria_finale
+            else:
+                categoria_finale = scelta
+                descrizione_finale = etichetta_custom.strip() or scelta
             st.session_state.wiz_confermate.append({
                 "anno": voce["anno"],
-                "categoria": scelta,
+                "categoria": categoria_finale,
                 "descrizione": descrizione_finale,
                 "importo": voce["importo"],
                 "tipo": voce["tipo"],
@@ -392,9 +455,12 @@ def _popup_revisione_voce():
             st.session_state.wiz_indice += 1
             st.rerun()
     with col_salta:
-        if st.button("Salta questa voce", use_container_width=True):
+        if st.button("Salta questa voce", use_container_width=True, key=f"salta_{idx}"):
             st.session_state.wiz_indice += 1
             st.rerun()
+
+    if disabled_conferma:
+        st.caption("Scrivi il nome della nuova categoria per poter confermare.")
 
 
 def _costruisci_risultati_per_anno() -> dict:
@@ -602,7 +668,7 @@ if avvia:
 
 
 # ---------------------------------------------------------------------------
-# FASE 2: REVISIONE (un popup per voce, in sequenza)
+# FASE 2: REVISIONE (layout a due colonne: anteprima a sinistra, voce a destra)
 # ---------------------------------------------------------------------------
 if st.session_state.wiz_fase == "revisione":
     idx = st.session_state.wiz_indice
@@ -610,7 +676,13 @@ if st.session_state.wiz_fase == "revisione":
 
     if idx < totale:
         st.progress(idx / totale, text=f"Revisione voce {idx + 1} di {totale}")
-        _popup_revisione_voce()
+        col_anteprima, col_revisione = st.columns([1, 1], gap="large")
+        with col_anteprima:
+            with st.container(border=True):
+                _pannello_anteprima()
+        with col_revisione:
+            with st.container(border=True):
+                _form_revisione_voce()
     else:
         st.session_state.wiz_fase = "completato"
         st.rerun()
@@ -640,7 +712,13 @@ if st.session_state.wiz_fase == "completato":
             st.button("Ricomincia", on_click=_reset_wizard, use_container_width=True)
             st.stop()
 
-        st.session_state.wiz_buffer = buffer
+        # Si salva il contenuto binario (bytes), NON l'oggetto BytesIO: lo
+        # stesso BytesIO riletto su rerun successivi (necessari perche'
+        # st.session_state sopravvive ai rerun di Streamlit) puo' trovarsi
+        # con il puntatore di lettura gia' avanzato/esaurito, facendo
+        # apparire il file scaricato vuoto o corrotto. I bytes invece sono
+        # un valore stabile e indipendente dalla posizione di lettura.
+        st.session_state.wiz_buffer = buffer.getvalue()
         st.session_state.wiz_report = report_per_anno
         st.session_state.wiz_errori_scrittura = errori_scrittura
 

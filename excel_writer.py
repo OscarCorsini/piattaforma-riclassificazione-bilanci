@@ -16,8 +16,15 @@ funziona con template reali che possono differire da quello di esempio:
      quando l'anno e' il risultato di una formula, es. "anno base + 1").
   3. Se la cella di destinazione fa parte di un intervallo di celle unite
      (merged), scrive nella cella "ancora" (in alto a sinistra).
-  4. Se una categoria non viene trovata nel template, la segnala come
-     "non mappata" invece di generare un errore bloccante.
+  4. Se una categoria di ENTRATA o USCITA non viene trovata nel template,
+     prova a INSERIRE dinamicamente una nuova riga per ospitarla (vedi
+     aggiungi_categoria_dinamica), cosi' l'utente puo' scrivere una voce
+     completamente nuova nel wizard di revisione e vederla comparire come
+     riga a se stante nel file Excel finale. Se anche l'inserimento
+     dinamico fallisce (o si tratta di gestione fiscale, che vive in
+     un'area a celle fisse e non viene mai toccata dinamicamente), la
+     categoria viene segnalata come "non mappata" invece di generare un
+     errore bloccante.
 
 Supporta inoltre la scrittura di PIU' ANNI in un'unica esecuzione
 (popola_template_multi), aprendo il workbook una sola volta e scrivendo
@@ -29,6 +36,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
+from copy import copy
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -36,6 +44,7 @@ import openpyxl
 from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
+from openpyxl.worksheet.cell_range import CellRange
 
 from config import SHEET_NAME_RICLASSIFICAZIONE, TEMPLATE_PATH
 from groq_client import RiclassificazioneResult
@@ -192,40 +201,275 @@ def _leggi_bytes(file_like) -> bytes:
     return dati
 
 
+# ---------------------------------------------------------------------------
+# INSERIMENTO DINAMICO DI UNA NUOVA RIGA CATEGORIA (voci non a mappatura fissa)
+# ---------------------------------------------------------------------------
+_CELL_REF_RE = re.compile(r"(\$?)([A-Z]{1,3})(\$?)(\d+)")
+
+
+def _shift_refs_ge(valore, soglia: int, delta: int):
+    """Nelle formule (stringhe che iniziano con '='), incrementa di
+    'delta' ogni riferimento di riga >= soglia. Lascia invariato tutto il
+    resto (valori non-formula, riferimenti a righe precedenti la soglia)."""
+    if not isinstance(valore, str) or not valore.startswith("="):
+        return valore
+
+    def repl(match):
+        col_abs, col, row_abs, row_s = match.groups()
+        row_num = int(row_s)
+        if row_num >= soglia:
+            row_num += delta
+        return f"{col_abs}{col}{row_abs}{row_num}"
+
+    return _CELL_REF_RE.sub(repl, valore)
+
+
+def _retarget_refs(valore, riga_da, riga_a):
+    """Nelle formule, sostituisce i riferimenti che puntano ESATTAMENTE a
+    riga_da con riga_a (usato per copiare la formula di una riga modello
+    in una nuova riga, mantenendo pero' intatti i riferimenti alle altre
+    righe, es. ai totali)."""
+    if not isinstance(valore, str) or not valore.startswith("="):
+        return valore
+
+    def repl(match):
+        col_abs, col, row_abs, row_s = match.groups()
+        row_num = int(row_s)
+        if row_num == riga_da:
+            row_num = riga_a
+        return f"{col_abs}{col}{row_abs}{row_num}"
+
+    return _CELL_REF_RE.sub(repl, valore)
+
+
+def _inserisci_riga_manuale(sheet, insert_at: int, riga_modello: int, nuova_label_col: int, nuova_label: str) -> int:
+    """
+    Inserisce una nuova riga in posizione insert_at (tutto cio' che si
+    trova a partire da insert_at scende di una posizione), copiando lo
+    stile e le formule della riga_modello (che si trova immediatamente
+    sopra insert_at, e quindi NON viene spostata) nella nuova riga.
+
+    Usa una tecnica a snapshot manuale invece di sheet.insert_rows():
+    quest'ultima puo' perdere silenziosamente il contenuto di celle unite
+    complesse (bug noto di openpyxl), come gia' verificato e risolto in
+    precedenza per la correzione strutturale del template.
+
+    Restituisce il numero della nuova riga (== insert_at).
+    """
+    max_row = sheet.max_row or 1
+    max_col = sheet.max_column or 1
+
+    # 1) Snapshot di ogni cella non vuota (valore + stile).
+    snapshot = {}
+    for row in range(1, max_row + 1):
+        for col in range(1, max_col + 1):
+            cell = sheet.cell(row=row, column=col)
+            if isinstance(cell, MergedCell):
+                continue
+            if cell.value is None:
+                continue
+            snapshot[(row, col)] = {
+                "value": cell.value,
+                "font": copy(cell.font),
+                "fill": copy(cell.fill),
+                "border": copy(cell.border),
+                "alignment": copy(cell.alignment),
+                "number_format": cell.number_format,
+            }
+
+    # 2) Snapshot dei merge e delle altezze riga.
+    merged_ranges = [str(rng) for rng in sheet.merged_cells.ranges]
+    row_heights = {row: sheet.row_dimensions[row].height for row in range(1, max_row + 1)}
+
+    # 3) Rimuove tutti i merge e svuota tutte le celle.
+    for rng_str in list(merged_ranges):
+        sheet.unmerge_cells(rng_str)
+    for row in range(1, max_row + 1):
+        for col in range(1, max_col + 1):
+            cell = sheet.cell(row=row, column=col)
+            if not isinstance(cell, MergedCell):
+                cell.value = None
+
+    # 4) Riscrive ogni cella nella nuova posizione, shiftando le formule.
+    for (row, col), dati in snapshot.items():
+        nuova_riga = row + 1 if row >= insert_at else row
+        valore = _shift_refs_ge(dati["value"], insert_at, 1)
+        cell = sheet.cell(row=nuova_riga, column=col)
+        cell.value = valore
+        cell.font = dati["font"]
+        cell.fill = dati["fill"]
+        cell.border = dati["border"]
+        cell.alignment = dati["alignment"]
+        cell.number_format = dati["number_format"]
+
+    # 5) Ricrea i merge nelle posizioni corrette.
+    for rng_str in merged_ranges:
+        rng = CellRange(rng_str)
+        min_row = rng.min_row + 1 if rng.min_row >= insert_at else rng.min_row
+        max_row_r = rng.max_row + 1 if rng.max_row >= insert_at else rng.max_row
+        if min_row == max_row_r and rng.min_col == rng.max_col:
+            continue
+        sheet.merge_cells(start_row=min_row, start_column=rng.min_col, end_row=max_row_r, end_column=rng.max_col)
+
+    # 6) Ripristina le altezze delle righe.
+    for row, height in row_heights.items():
+        nuova_riga = row + 1 if row >= insert_at else row
+        if height is not None:
+            sheet.row_dimensions[nuova_riga].height = height
+    altezza_modello = sheet.row_dimensions[riga_modello].height
+    if altezza_modello is not None:
+        sheet.row_dimensions[insert_at].height = altezza_modello
+
+    # 7) Copia il contenuto della riga_modello (ancora al suo posto,
+    # perche' riga_modello < insert_at) nella nuova riga vuota, ri-
+    # targettizzando solo i riferimenti che puntavano esattamente alla
+    # riga_modello (es. "=D29/$D$24" diventa "=D30/$D$24" sulla riga
+    # nuova, mantenendo pero' $D$24 intatto).
+    for col in range(1, max_col + 1):
+        cell_modello = sheet.cell(row=riga_modello, column=col)
+        if cell_modello.value is None:
+            continue
+        valore = _retarget_refs(cell_modello.value, riga_modello, insert_at)
+        cell_nuova = sheet.cell(row=insert_at, column=col)
+        cell_nuova.value = valore
+        cell_nuova.font = copy(cell_modello.font)
+        cell_nuova.fill = copy(cell_modello.fill)
+        cell_nuova.border = copy(cell_modello.border)
+        cell_nuova.alignment = copy(cell_modello.alignment)
+        cell_nuova.number_format = cell_modello.number_format
+
+    # Replica anche gli eventuali merge di cui faceva parte la riga_modello
+    # (es. "D29:E29") sulla nuova riga.
+    for rng_str in merged_ranges:
+        rng = CellRange(rng_str)
+        if rng.min_row == riga_modello and rng.max_row == riga_modello and rng.min_col != rng.max_col:
+            sheet.merge_cells(start_row=insert_at, start_column=rng.min_col, end_row=insert_at, end_column=rng.max_col)
+
+    # Etichetta della nuova voce (sovrascrive il testo copiato dal modello).
+    sheet.cell(row=insert_at, column=nuova_label_col).value = nuova_label
+
+    return insert_at
+
+
+def _estendi_somma_categoria(sheet, riga_sum: int, vecchia_fine: int, nuova_fine: int) -> None:
+    """Estende l'intervallo delle formule SUM (o simili) presenti sulla
+    riga_sum, spostando la fine dell'intervallo da vecchia_fine a
+    nuova_fine (es. "=SUM(D29:E39)" diventa "=SUM(D29:E40)"), cosi' la
+    riga appena inserita viene inclusa nel totale."""
+    pattern = re.compile(rf":([A-Z]{{1,3}}){vecchia_fine}\b")
+    max_col = sheet.max_column or 1
+    for col in range(1, max_col + 1):
+        cell = sheet.cell(row=riga_sum, column=col)
+        valore = cell.value
+        if isinstance(valore, str) and valore.startswith("=") and pattern.search(valore):
+            cell.value = pattern.sub(rf":\g<1>{nuova_fine}", valore)
+
+
+def aggiungi_categoria_dinamica(sheet, sezione: str, nuova_categoria: str) -> Optional[int]:
+    """
+    Inserisce una nuova riga per una categoria di ENTRATA o USCITA non
+    presente nel template (l'utente ha scritto una voce completamente
+    nuova nel wizard di revisione, che non corrisponde a nessuna
+    categoria esistente).
+
+      - sezione "entrata": la riga viene inserita subito PRIMA di
+        "Totale entrate", ed estende la somma di quella riga.
+      - sezione "uscita": la riga viene inserita come nuovo "di cui"
+        subito PRIMA di "Affitti" (nel blocco "Costi normali"), ed
+        estende la somma di "Costi normali".
+
+    La gestione fiscale non e' MAI gestita da questa funzione: vive in
+    un'area a celle fisse separata del template e non deve mai essere
+    alterata dinamicamente.
+
+    Restituisce il numero della nuova riga se l'inserimento e' riuscito,
+    altrimenti None (il chiamante deve trattare la categoria come "non
+    mappata" senza che il file venga alterato).
+    """
+    if sezione == "entrata":
+        riga_ancora = _trova_riga_categoria(sheet, "Totale entrate")
+        etichetta_col = 2
+        riga_sum = riga_ancora
+    elif sezione == "uscita":
+        riga_ancora = _trova_riga_categoria(sheet, "Affitti")
+        etichetta_col = 3
+        riga_sum = _trova_riga_categoria(sheet, "Costi normali")
+    else:
+        return None
+
+    if riga_ancora is None or riga_sum is None:
+        return None
+
+    riga_modello = riga_ancora - 1
+    if riga_modello < 1:
+        return None
+    if sezione == "uscita" and riga_modello <= riga_sum:
+        # Per le uscite riga_sum ("Costi normali") e' una riga diversa da
+        # riga_ancora ("Affitti"): se la riga modello finisse dentro o
+        # prima del blocco somma, la struttura del template non e' quella
+        # attesa. Per le entrate invece riga_sum COINCIDE con riga_ancora
+        # ("Totale entrate" e' essa stessa la riga di somma), quindi questo
+        # controllo non si applica.
+        return None
+
+    try:
+        nuova_riga = _inserisci_riga_manuale(
+            sheet,
+            insert_at=riga_ancora,
+            riga_modello=riga_modello,
+            nuova_label_col=etichetta_col,
+            nuova_label=nuova_categoria,
+        )
+        riga_sum_finale = riga_sum + 1 if riga_sum >= riga_ancora else riga_sum
+        _estendi_somma_categoria(sheet, riga_sum_finale, riga_modello, riga_ancora)
+    except Exception:
+        return None
+
+    return nuova_riga
+
+
 def _scrivi_valori_anno(sheet, colonna: str, risultato: RiclassificazioneResult) -> WriteReport:
     """Scrive i valori di UN anno (una colonna) gia' individuata nel foglio
     gia' aperto. Funzione interna riusata sia dal percorso a singolo anno
     che da quello multi-anno."""
-    valori_da_scrivere = {
-        **risultato.totale_entrate(),
-        **risultato.totale_uscite(),
-        **risultato.totale_gestione_fiscale(),
-    }
-
     celle_scritte = 0
     voci_non_mappate: List[str] = []
 
-    for categoria, valore in valori_da_scrivere.items():
-        riga = _trova_riga_categoria(sheet, categoria)
-        if riga is None:
-            voci_non_mappate.append(categoria)
-            continue
-
+    def _scrivi_cella(riga: int, categoria: str) -> bool:
         cella = sheet[f"{colonna}{riga}"]
+        nonlocal celle_scritte
         if isinstance(cella, MergedCell):
             ancora = _trova_cella_ancora(sheet, cella)
             if ancora is None:
-                voci_non_mappate.append(categoria)
-                continue
+                return False
             cella = ancora
-
         try:
             cella.value = valore
             celle_scritte += 1
+            return True
         except Exception as exc:
             raise ExcelTemplateError(
                 f"Errore scrivendo la categoria '{categoria}' nella cella '{cella.coordinate}': {exc}"
             ) from exc
+
+    # Entrate e uscite: se la categoria non e' gia' presente nel template,
+    # si prova a inserire dinamicamente una nuova riga per ospitarla.
+    for sezione, valori_da_scrivere in (
+        ("entrata", risultato.totale_entrate()),
+        ("uscita", risultato.totale_uscite()),
+    ):
+        for categoria, valore in valori_da_scrivere.items():
+            riga = _trova_riga_categoria(sheet, categoria)
+            if riga is None:
+                riga = aggiungi_categoria_dinamica(sheet, sezione, categoria)
+            if riga is None or not _scrivi_cella(riga, categoria):
+                voci_non_mappate.append(categoria)
+
+    # Gestione fiscale: MAI inserita dinamicamente (area a celle fisse).
+    for categoria, valore in risultato.totale_gestione_fiscale().items():
+        riga = _trova_riga_categoria(sheet, categoria)
+        if riga is None or not _scrivi_cella(riga, categoria):
+            voci_non_mappate.append(categoria)
 
     return WriteReport(
         celle_scritte=celle_scritte,

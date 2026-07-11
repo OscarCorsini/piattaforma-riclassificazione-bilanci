@@ -37,6 +37,14 @@ In questo modo l'AI non deve piu' prendere alcuna decisione delicata: deve
 solo leggere e trascrivere fedelmente, il che e' un compito molto piu'
 alla sua portata.
 
+FLUSSO DI REVISIONE MANUALE (v3):
+-----------------------------------
+La classificazione automatica resta disponibile SOLO come suggerimento
+(classificatore.suggerisci_categoria): il modulo app.py usa ora
+estrai_voci_bilancio() per ottenere le voci grezze e farle confermare una
+per una dall'utente, invece di applicare classifica_voci() in automatico.
+riclassifica_bilancio() resta disponibile per compatibilita'/uso diretto.
+
 STRUTTURA DEL RISULTATO:
 -------------------------
 RiclassificazioneResult tiene, per ciascuna categoria (entrate/uscite/
@@ -382,16 +390,16 @@ def estrai_voci_bilancio(anno: str, testi_pdf: List[str]) -> Dict:
     """
     Come riclassifica_bilancio, ma SENZA applicare la classificazione
     automatica per categoria: restituisce le voci grezze (gia' passate
-    dalla deduplicazione gerarchica) cosi' come sono, per permettere
-    all'utente di confermarle/correggerle una per una nell'interfaccia
-    (flusso a popup).
+    dalla deduplicazione gerarchica e dal filtro delle righe di riepilogo)
+    cosi' come sono, per permettere all'utente di confermarle/correggerle
+    una per una nell'interfaccia (flusso a due colonne).
 
     Restituisce un dict con:
       - "voci": lista di dict {"descrizione", "codice_conto", "importo", "tipo"}
       - "gestione_fiscale": dict {categoria: valore_numerico}
       - "note": lista di osservazioni testuali
     """
-    from classificatore import filtra_subtotali_gerarchia
+    from classificatore import filtra_subtotali_gerarchia, filtra_voci_riepilogo
 
     system_prompt = _build_system_prompt()
     user_prompt = _build_user_prompt(anno, testi_pdf)
@@ -400,5 +408,9 @@ def estrai_voci_bilancio(anno: str, testi_pdf: List[str]) -> Dict:
     dati = _parse_voci_response(raw_response)
 
     dati["voci"] = filtra_subtotali_gerarchia(dati["voci"])
+    # Scarta le righe di puro riepilogo (TOTALE RICAVI, UTILE D'ESERCIZIO,
+    # ecc.): il template le calcola da solo con formule di somma, non
+    # devono mai essere proposte per la conferma manuale.
+    dati["voci"] = filtra_voci_riepilogo(dati["voci"])
 
     return dati

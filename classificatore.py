@@ -279,3 +279,18 @@ def suggerisci_categoria(descrizione: str, tipo: str) -> str:
     """
     tipo_normalizzato = "entrata" if str(tipo).strip().lower().startswith("entrat") else "uscita"
     return _classifica_una_voce(descrizione, tipo_normalizzato)
+
+
+def filtra_voci_riepilogo(voci: List[Dict]) -> List[Dict]:
+    """
+    Rimuove dalla lista le voci di puro riepilogo/risultato (es. "TOTALE
+    RICAVI", "TOTALE COSTI", "UTILE D'ESERCIZIO", "PERDITA D'ESERCIZIO"):
+    il file Excel calcola questi totali da solo con formule di somma, non
+    devono mai essere proposti all'utente per la conferma manuale ne'
+    scritti come voci a se stanti (altrimenti verrebbero sommati due
+    volte: una dentro le categorie di dettaglio, una come voce a parte).
+    """
+    return [
+        v for v in voci
+        if not PATTERN_DA_SCARTARE.search(_normalizza(v.get("descrizione", "")))
+    ]
